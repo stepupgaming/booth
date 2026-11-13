@@ -61,18 +61,43 @@ async fn overview() -> Res<Overview> {
 
 #[derive(Serialize)]
 struct SystemCheck {
+    /// An NVIDIA card (Windows, Linux) or the Apple chip (macOS).
     gpu: Option<String>,
+    /// The card's memory, or the Mac's unified memory.
     vram_gb: Option<f64>,
+    /// "nvidia", "apple" or "none": what the graphics card can do for Booth.
+    gpu_kind: &'static str,
+    cpu: Option<String>,
+    cpu_threads: usize,
+    ram_gb: f64,
     disk: Option<String>,
     disk_free_gb: Option<f64>,
     os: Option<String>,
+    platform: &'static str,
     engine_found: bool,
 }
 
-/// GPU, free disk where the models go, and Windows version, for the first setup screen.
+/// Graphics card, processor, free disk where the models go, and OS, for the first setup screen.
 #[tauri::command]
 async fn system_check() -> Res<SystemCheck> {
-    let (gpu, vram_gb) = tokio::task::spawn_blocking(nvidia_gpu).await.map_err(err)?;
+    use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+    let sys = System::new_with_specifics(
+        RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing()).with_memory(MemoryRefreshKind::nothing().with_ram()),
+    );
+    let cpu = sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty());
+    let cpu_threads = sys.cpus().len().max(1);
+    let ram_gb = (sys.total_memory() as f64 / 1e9).round();
+    let (gpu, vram_gb, gpu_kind) = if cfg!(target_os = "macos") {
+        let chip = tokio::task::spawn_blocking(apple_chip).await.map_err(err)?;
+        match chip {
+            Some(name) => (Some(name), Some(ram_gb), "apple"),
+            None => (None, None, "none"),
+        }
+    } else {
+        let (name, vram) = tokio::task::spawn_blocking(nvidia_gpu).await.map_err(err)?;
+        let kind = if name.is_some() { "nvidia" } else { "none" };
+        (name, vram, kind)
+    };
     let models_dir = paths::models_dir();
     let disks = sysinfo::Disks::new_with_refreshed_list();
     // The disk whose mount point is the longest prefix of the models folder.
@@ -83,13 +108,28 @@ async fn system_check() -> Res<SystemCheck> {
         .filter(|d| target.starts_with(&d.mount_point().to_string_lossy().to_lowercase()))
         .max_by_key(|d| d.mount_point().as_os_str().len());
     Ok(SystemCheck {
-        gpu,
-        vram_gb,
         disk: disk.map(|d| d.mount_point().to_string_lossy().trim_end_matches('\\').to_string()),
         disk_free_gb: disk.map(|d| d.available_space() as f64 / 1e9),
         os: sysinfo::System::long_os_version(),
-        engine_found: paths::engine_dir().join(paths::SERVER_EXE).is_file(),
+        platform: std::env::consts::OS,
+        engine_found: !engine::choices(settings::load().device).is_empty(),
+        gpu,
+        vram_gb,
+        gpu_kind,
+        cpu,
+        cpu_threads,
+        ram_gb,
     })
+}
+
+/// "Apple M2 Pro" on Apple Silicon; None on an Intel Mac (no Metal build for those).
+fn apple_chip() -> Option<String> {
+    if !cfg!(target_arch = "aarch64") {
+        return None;
+    }
+    let out = std::process::Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Some(if name.is_empty() { "Apple Silicon".into() } else { name })
 }
 
 fn nvidia_gpu() -> (Option<String>, Option<f64>) {
@@ -124,13 +164,14 @@ async fn pack_info() -> Res<Vec<PackInfo>> {
     let client = reqwest::Client::new();
     let models_dir = paths::models_dir();
     let mut out = Vec::new();
-    for pack in Pack::ALL {
+    for pack in Pack::ALL.iter().copied() {
         let bytes = match models::plan(&client, pack).await {
             Ok(files) => files.iter().map(|f| f.size).sum(),
             Err(_) => match pack {
                 Pack::Core => 1_160_000_000,
                 Pack::Exact => 5_600_000_000,
                 Pack::FullDecoder => 2_200_000_000,
+                Pack::GpuEngine => 743_066_931,
             },
         };
         out.push(PackInfo {
@@ -492,7 +533,7 @@ async fn save_settings(s: settings::Settings) -> Res<settings::Settings> {
 struct ClaudeInfo {
     /// The one-click bundle, if it shipped with the app (or was built in the repo).
     mcpb: Option<PathBuf>,
-    /// booth-mcp.exe, for a manual `claude_desktop_config.json` entry or Claude Code.
+    /// booth-mcp, for a manual `claude_desktop_config.json` entry or Claude Code.
     exe: Option<PathBuf>,
     /// Claude Desktop's config folder exists.
     desktop_found: bool,
@@ -521,8 +562,9 @@ fn find_resource(app: &AppHandle, name: &str, dev: &[&str]) -> Option<PathBuf> {
 #[tauri::command]
 async fn claude_info(app: AppHandle) -> Res<ClaudeInfo> {
     let mcpb = find_resource(&app, "booth.mcpb", &["dist/booth.mcpb"]);
-    let exe = find_resource(&app, "booth-mcp.exe", &["target/release/booth-mcp.exe", "target/debug/booth-mcp.exe"]);
-    let cfg_dir = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Claude"));
+    let mcp = format!("booth-mcp{}", std::env::consts::EXE_SUFFIX);
+    let exe = find_resource(&app, &mcp, &[&format!("target/release/{mcp}"), &format!("target/debug/{mcp}")]);
+    let cfg_dir = claude_desktop_dir();
     let desktop_found = cfg_dir.as_ref().is_some_and(|d| d.is_dir());
     let mut connected = false;
     if let Some(d) = &cfg_dir {
@@ -533,8 +575,76 @@ async fn claude_info(app: AppHandle) -> Res<ClaudeInfo> {
             connected |= rd.filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().to_lowercase().contains("booth"));
         }
     }
-    let config_snippet = json!({ "mcpServers": { "booth": { "command": exe.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "booth-mcp.exe".into()) } } });
+    let config_snippet = json!({ "mcpServers": { "booth": { "command": exe.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| mcp.clone()) } } });
     Ok(ClaudeInfo { mcpb, exe, desktop_found, connected, config_snippet })
+}
+
+/// Claude Desktop's config folder: %APPDATA%\Claude on Windows, ~/Library/Application
+/// Support/Claude on macOS. There is no Claude Desktop for Linux.
+fn claude_desktop_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Claude"))
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support").join("Claude"))
+    } else {
+        None
+    }
+}
+
+// ---------- updates ----------
+
+#[derive(Serialize)]
+struct UpdateInfo {
+    version: String,
+    current: String,
+    notes: Option<String>,
+}
+
+/// The updater, pointed at `BOOTH_UPDATE_URL` when that is set (to test a release before it is
+/// "latest").
+fn updater(app: &AppHandle) -> Res<tauri_plugin_updater::Updater> {
+    use tauri_plugin_updater::UpdaterExt;
+    let mut b = app.updater_builder();
+    if let Some(url) = std::env::var("BOOTH_UPDATE_URL").ok().filter(|u| !u.is_empty()) {
+        b = b.endpoints(vec![url.parse().map_err(err)?]).map_err(err)?;
+    }
+    b.build().map_err(err)
+}
+
+/// A newer Booth on GitHub Releases, or None.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Res<Option<UpdateInfo>> {
+    let update = updater(&app)?.check().await.map_err(err)?;
+    Ok(update.map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone() }))
+}
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    done_bytes: u64,
+    total_bytes: Option<u64>,
+}
+
+/// Download the update (checked against Booth's signing key), stop the engine once it is idle so
+/// its files can be replaced, install, and restart.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Res<()> {
+    let update = updater(&app)?.check().await.map_err(err)?.ok_or("Booth is already up to date")?;
+    let mut done = 0u64;
+    let app2 = app.clone();
+    let bytes = update
+        .download(
+            move |chunk, total| {
+                done += chunk as u64;
+                let _ = app2.emit("update-progress", UpdateProgress { done_bytes: done, total_bytes: total });
+            },
+            || {},
+        )
+        .await
+        .map_err(err)?;
+    let _ = engine::stop_when_idle(Duration::from_secs(120)).await;
+    STOPPING.store(true, Ordering::SeqCst);
+    update.install(bytes).map_err(err)?;
+    app.restart();
 }
 
 /// Shows a take or folder in Explorer. Only paths inside Booth's own folders.
@@ -578,8 +688,17 @@ static STOPPING: AtomicBool = AtomicBool::new(false);
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             allow_media(app.handle());
+            // So booth-mcp, installed in Claude's own folder, finds the engine that shipped here.
+            if let Ok(dir) = app.path().resource_dir() {
+                paths::record_install(&dir);
+                // Booth isn't notarized yet: once the person has opened the app, clear the download
+                // quarantine from the engine and booth-mcp too, so macOS doesn't block them on start.
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("xattr").arg("-dr").arg("com.apple.quarantine").arg(&dir).status();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -608,11 +727,13 @@ pub fn run() {
             claude_info,
             reveal,
             install_mcpb,
+            check_update,
+            install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Booth")
         .run(|app, event| {
-            // Free the GPU when the window closes, unless the user keeps the engine for Claude.
+            // Free the engine when the window closes, unless the user keeps the engine for Claude.
             // stop_when_idle waits for any render in flight; it never kills a running job.
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if settings::load().keep_engine_running || STOPPING.swap(true, Ordering::SeqCst) {

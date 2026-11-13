@@ -69,6 +69,16 @@ export function BoothApp() {
     }
   }, [ready, loadVoices, loadCatalog]);
 
+  // Look for a newer Booth a few seconds after start (quietly: offline is fine).
+  const checkUpdate = useBooth((s) => s.checkUpdate);
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    const t = setTimeout(() => checkUpdate().catch(() => undefined), 4000);
+    return () => clearTimeout(t);
+  }, [ready, checkUpdate]);
+
   let body: React.ReactNode;
   if (!booted) {
     body = <div className="booth" />;

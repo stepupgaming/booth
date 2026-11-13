@@ -147,10 +147,12 @@ let settings: Settings = {
   mcp_allow_cloning: false,
   keep_engine_running: false,
   laci: false,
+  device: "auto",
 };
 
 const packs: PackInfo[] = [
   { pack: "core", label: "Core voices", present: true, bytes: 1.16e9, files: ["a", "b", "c"] },
+  { pack: "gpu_engine", label: "NVIDIA graphics engine", present: false, bytes: 0.74e9, files: ["zonos3-server"] },
   { pack: "full_decoder", label: "Studio decoder", present: false, bytes: 2.2e9, files: ["a"] },
   { pack: "exact", label: "High-fidelity cloning", present: false, bytes: 5.6e9, files: ["a", "b"] },
 ];
@@ -186,6 +188,21 @@ const take = (text: string, v: string, seed: number | null, controls: Record<str
 
 type Args = Record<string, any>;
 
+/** The preview URL's flags, read when used (not on the server, where there is no location). */
+const q = { has: (k: string) => typeof location !== "undefined" && new URLSearchParams(location.search).has(k) };
+
+/** ?cpu: a PC without an NVIDIA card; ?mac: an Apple Silicon Mac. */
+const systemCheck = () => {
+  const base = { cpu: "AMD Ryzen 9 9900X 12-Core Processor", cpu_threads: 24, ram_gb: 64, disk_free_gb: 412, engine_found: true };
+  if (q.has("mac")) {
+    return { ...base, gpu: "Apple M3 Pro", vram_gb: 36, gpu_kind: "apple", cpu: "Apple M3 Pro", cpu_threads: 12, ram_gb: 36, disk: "/", os: "macOS 15.1", platform: "macos" };
+  }
+  if (q.has("cpu")) {
+    return { ...base, gpu: null, vram_gb: null, gpu_kind: "none", disk: "C:", os: "Windows 11", platform: "windows" };
+  }
+  return { ...base, gpu: "NVIDIA GeForce RTX 5090", vram_gb: 32, gpu_kind: "nvidia", disk: "C:", os: "Windows 11", platform: "windows" };
+};
+
 export function installMock() {
   // ?setup shows the first-run screen (no packs downloaded yet).
   if (new URLSearchParams(location.search).has("setup")) {
@@ -202,7 +219,19 @@ export function installMock() {
         case "overview":
           return overview();
         case "system_check":
-          return { gpu: "NVIDIA GeForce RTX 5090", vram_gb: 32, disk: "C:", disk_free_gb: 412, os: "Windows 11", engine_found: true };
+          return systemCheck();
+        case "plugin:app|version":
+          return "0.2.0";
+        case "check_update":
+          return q.has("update") ? { version: "0.2.1", current: "0.2.0", notes: null } : null;
+        case "install_update":
+          for (let i = 1; i <= 10; i++) {
+            await wait(150);
+            await emit("update-progress", { done_bytes: i * 1e6, total_bytes: 1e7 });
+          }
+          return null;
+        case "engine_restart":
+          return overview().engine;
         case "claude_info":
           return {
             mcpb: "booth.mcpb",

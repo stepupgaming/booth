@@ -7,6 +7,7 @@ import {
   errText,
   type Overview,
   type SystemCheck,
+  type UpdateInfo,
   type Voice,
 } from "@workspace/core/booth/api";
 
@@ -23,6 +24,10 @@ interface BoothState {
   /** Renders in flight (shows "Speaking" in the nav). */
   busy: number;
   catalogError: string | null;
+  /** A newer Booth, once the startup check finds one. */
+  update: UpdateInfo | null;
+  version: string | null;
+  checkUpdate: () => Promise<UpdateInfo | null>;
   go: (v: View) => void;
   refresh: () => Promise<Overview | null>;
   loadSystem: () => Promise<void>;
@@ -44,6 +49,16 @@ export const useBooth = create<BoothState>((set, get) => ({
   voiceId: null,
   busy: 0,
   catalogError: null,
+  update: null,
+  version: null,
+  checkUpdate: async () => {
+    if (!get().version) {
+      api.version().then((version) => set({ version })).catch(() => undefined);
+    }
+    const update = await api.checkUpdate();
+    set({ update });
+    return update;
+  },
   go: (view) => set({ view }),
   refresh: async () => {
     try {

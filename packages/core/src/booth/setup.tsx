@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { api, type DownloadEvent, errText, type Pack, type PackInfo } from "@workspace/core/booth/api";
+import { api, type DownloadEvent, errText, type Pack, type PackInfo, type SystemCheck } from "@workspace/core/booth/api";
 import { useBooth } from "@workspace/core/booth/store";
 import { Backdrop, Brand, PlayButton, useToast, Wave } from "@workspace/core/booth/ui";
 
@@ -11,9 +11,14 @@ const PACK_TEXT: Record<Pack, { name: string; desc: string; files: string }> = {
     desc: "27 preset voices, cloning from a short clip, moods and delivery controls, the fast decoder.",
     files: "backbone-ptq · zac-keep2 · spk-encoder · steer · voices",
   },
+  gpu_engine: {
+    name: "NVIDIA graphics engine",
+    desc: "Runs Booth on your NVIDIA card, several times faster than the processor. Without it Booth uses the processor.",
+    files: "zonos3-server · CUDA 12.8 · from Booth’s GitHub releases",
+  },
   full_decoder: {
     name: "Studio-quality decoder",
-    desc: "The full audio decoder. Cleaner, fuller sound, same speed on a GPU.",
+    desc: "The full audio decoder. Cleaner, fuller sound. Just as fast on a graphics card; about 3× slower on the processor.",
     files: "zac",
   },
   exact: {
@@ -22,7 +27,7 @@ const PACK_TEXT: Record<Pack, { name: string; desc: string; files: string }> = {
     files: "zac-encoder · ssl-teacher",
   },
 };
-const ORDER: Pack[] = ["core", "full_decoder", "exact"];
+const ORDER: Pack[] = ["core", "gpu_engine", "full_decoder", "exact"];
 
 const CHECK_OK = "M5 12l5 5 9-10";
 const CHECK_WARN = "M12 7v6M12 17h.01";
@@ -58,6 +63,40 @@ function CheckRow({ ok, title, detail }: { ok: boolean; title: string; detail: s
   );
 }
 
+/** What Booth will run on: the NVIDIA card, the Mac's graphics, or the processor. */
+function ChipRow({ system }: { system: SystemCheck }) {
+  const cpu = system.cpu ? `${system.cpu.replace(/\s+\d+-Core Processor$/, "")} · ${system.cpu_threads} threads` : "Your processor";
+  if (system.gpu_kind === "apple") {
+    return (
+      <CheckRow
+        detail="Booth runs on the Mac’s graphics (Metal) while it talks, and frees it when you close the app."
+        ok={true}
+        title={`${system.gpu} · ${Math.round(system.ram_gb)} GB`}
+      />
+    );
+  }
+  if (system.gpu_kind === "nvidia") {
+    return (
+      <CheckRow
+        detail={
+          system.platform === "windows"
+            ? "Booth can run on this card. Its engine is ticked on the next step; without it Booth uses the processor."
+            : "Booth runs on the processor here; the graphics card engine is Windows-only for now."
+        }
+        ok={true}
+        title={`${system.gpu}${system.vram_gb ? ` · ${Math.round(system.vram_gb)} GB` : ""}`}
+      />
+    );
+  }
+  return (
+    <CheckRow
+      detail="No NVIDIA graphics card, so Booth runs on the processor. A line takes a few seconds."
+      ok={true}
+      title={cpu}
+    />
+  );
+}
+
 const fmtTime = (s: number) => (s >= 90 ? `${Math.round(s / 60)} min` : `${Math.max(1, Math.round(s))} s`);
 
 export function Setup({ onDone }: { onDone: () => void }) {
@@ -67,7 +106,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const refresh = useBooth((s) => s.refresh);
   const [step, setStep] = useState(0);
   const [packs, setPacks] = useState<PackInfo[]>([]);
-  const [want, setWant] = useState<Record<Pack, boolean>>({ core: true, full_decoder: false, exact: false });
+  const [want, setWant] = useState<Record<Pack, boolean>>({ core: true, gpu_engine: false, full_decoder: false, exact: false });
   const [ev, setEv] = useState<DownloadEvent | null>(null);
   const [queue, setQueue] = useState<Pack[]>([]);
   const [finished, setFinished] = useState(false);
@@ -81,9 +120,20 @@ export function Setup({ onDone }: { onDone: () => void }) {
       .catch((e) => toast.bad(errText(e)));
   }, [loadSystem, toast]);
 
+  // With an NVIDIA card, the graphics engine is ticked to start with.
+  const nvidia = system?.gpu_kind === "nvidia";
+  useEffect(() => {
+    if (nvidia) {
+      setWant((w) => ({ ...w, gpu_engine: true }));
+    }
+  }, [nvidia]);
+
   const info = (p: Pack) => packs.find((x) => x.pack === p);
   const missing = (p: Pack) => !info(p)?.present;
-  const chosen = ORDER.filter((p) => missing(p) && (p === "core" || want[p]));
+  // Only the packs this platform offers (the NVIDIA engine is Windows-only), and the NVIDIA
+  // engine only when there is a card for it.
+  const offered = ORDER.filter((p) => info(p) && (p !== "gpu_engine" || nvidia || !missing(p)));
+  const chosen = offered.filter((p) => missing(p) && (p === "core" || want[p]));
   const bytes = (p: Pack) => info(p)?.bytes ?? 0;
   const totalBytes = chosen.reduce((a, p) => a + bytes(p), 0);
   const totalGb = (totalBytes / 1e9).toFixed(2);
@@ -123,7 +173,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
 
   const disk = system?.disk_free_gb;
   const coreMissing = missing("core");
-  const heads = ["Let’s check your PC", "Choose your sound", finished ? "You’re all set" : "Bringing the voices home"];
+  const heads = ["Let’s check your computer", "Choose your sound", finished ? "You’re all set" : "Bringing the voices home"];
   const subs = [
     "Booth runs the ZONOS3-Mini voice model entirely on your computer. Nothing you type or record ever leaves it.",
     "Start small and add the rest later from Settings. Each pack works the moment it lands.",
@@ -195,32 +245,20 @@ export function Setup({ onDone }: { onDone: () => void }) {
             {step === 0 ? (
               system ? (
                 <>
-                  <CheckRow
-                    detail={
-                      system.gpu
-                        ? "Booth uses the graphics card while it talks, and frees it when you close the app."
-                        : "Booth’s engine runs on an NVIDIA graphics card (CUDA). It may not start without one."
-                    }
-                    ok={!!system.gpu}
-                    title={
-                      system.gpu
-                        ? `${system.gpu}${system.vram_gb ? ` · ${Math.round(system.vram_gb)} GB` : ""}`
-                        : "No NVIDIA graphics card found"
-                    }
-                  />
+                  <ChipRow system={system} />
                   <CheckRow
                     detail="You need 1.2 GB for the basics, up to 9 GB with everything."
                     ok={disk == null || disk > 9}
                     title={
                       disk == null
                         ? "Disk space: couldn’t check"
-                        : `${Math.round(disk)} GB free on ${system.disk ? `drive ${system.disk}` : "the models drive"}`
+                        : `${Math.round(disk)} GB free${/^[A-Z]:$/i.test(system.disk ?? "") ? ` on drive ${system.disk}` : ""}`
                     }
                   />
                   <CheckRow
                     detail="No Python or PyTorch: the engine is one native program."
                     ok={true}
-                    title={system.os ?? "Windows"}
+                    title={system.os ?? "Your system"}
                   />
                   {system.engine_found ? null : (
                     <CheckRow
@@ -232,14 +270,14 @@ export function Setup({ onDone }: { onDone: () => void }) {
                 </>
               ) : (
                 <div className="muted" style={{ display: "flex", gap: 10, alignItems: "center", padding: 8 }}>
-                  <span className="spinner" /> Checking your PC…
+                  <span className="spinner" /> Checking your computer…
                 </div>
               )
             ) : null}
 
             {step === 1 ? (
               <>
-                {ORDER.map((p) => {
+                {offered.map((p) => {
                   const present = !missing(p);
                   const on = p === "core" || present || want[p];
                   const locked = p === "core" || present;
@@ -279,7 +317,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
                   className="muted"
                   style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, padding: "6px 4px 0", fontSize: 13 }}
                 >
-                  <span>From Hugging Face · Zyphra/ZONOS3-Mini · Apache-2.0</span>
+                  <span>Voices from Hugging Face · Zyphra/ZONOS3-Mini · Apache-2.0</span>
                   <span style={{ color: "var(--b-text)", fontWeight: 500 }}>Total {totalGb} GB</span>
                 </div>
               </>

@@ -1,7 +1,10 @@
-//! Starts `zonos3-server.exe` once and shares it between the app and booth-mcp.
+//! Starts `zonos3-server` once and shares it between the app and booth-mcp.
 //!
-//! Whoever needs the engine first starts it on a free localhost port and writes
-//! `%LOCALAPPDATA%\NoFaceTube\Booth\engine.json` (pid, port). Everyone else reads that file and attaches.
+//! Whoever needs the engine first starts it on a free localhost port and writes `engine.json`
+//! (pid, port) in Booth's folder. Everyone else reads that file and attaches.
+//!
+//! Which engine runs: the NVIDIA build (downloaded on Windows) on the graphics card, the bundled
+//! Metal build on Apple Silicon, else the bundled CPU build on the processor.
 //! The engine keeps running after the starter exits, so a Claude Desktop request doesn't pay the
 //! model load again; `stop()` ends it.
 
@@ -15,6 +18,49 @@ use serde::{Deserialize, Serialize};
 use crate::api::Zonos;
 use crate::models::{self, Pack};
 use crate::paths;
+use crate::settings::{self, Device};
+
+/// What the engine computes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Accel {
+    Cuda,
+    Metal,
+    Cpu,
+}
+
+impl Accel {
+    fn flag(self) -> &'static str {
+        if self == Accel::Cpu { "--cpu" } else { "--gpu" }
+    }
+}
+
+/// An engine folder and how to run it.
+#[derive(Debug, Clone)]
+pub struct EngineChoice {
+    pub dir: PathBuf,
+    pub accel: Accel,
+}
+
+/// The engines to try for `device`, best first.
+pub fn choices(device: Device) -> Vec<EngineChoice> {
+    let mut out = Vec::new();
+    if device == Device::Auto {
+        if let Some(dir) = models::installed_cuda_engine() {
+            out.push(EngineChoice { dir, accel: Accel::Cuda });
+        }
+    }
+    if let Some(dir) = paths::bundled_engine_dir() {
+        // 0.1 shipped the CUDA build as `engine/`; it only runs on the graphics card, and is
+        // already listed above when present.
+        if dir.file_name().is_some_and(|n| n == "engine") && cfg!(windows) {
+            return out;
+        }
+        let accel = if cfg!(target_os = "macos") && device == Device::Auto { Accel::Metal } else { Accel::Cpu };
+        out.push(EngineChoice { dir, accel });
+    }
+    out
+}
 
 pub const DEFAULT_PORT: u16 = 47219;
 
@@ -27,6 +73,9 @@ pub struct EngineLock {
     /// Packs loaded at start; a pack downloaded later needs a restart to be used.
     #[serde(default)]
     pub packs: Vec<Pack>,
+    /// What it runs on (missing in locks written by 0.1, which always ran CUDA).
+    #[serde(default)]
+    pub accel: Option<Accel>,
 }
 
 impl EngineLock {
@@ -43,7 +92,7 @@ pub enum EngineState {
     /// The core model pack is missing.
     NoModels { looked_in: String },
     Stopped,
-    Running { port: u16, pid: u32, packs: Vec<Pack> },
+    Running { port: u16, pid: u32, packs: Vec<Pack>, accel: Accel },
 }
 
 fn read_lock() -> Option<EngineLock> {
@@ -64,11 +113,11 @@ pub async fn running() -> Option<(EngineLock, Zonos)> {
 
 pub async fn state() -> EngineState {
     if let Some((lock, _)) = running().await {
-        return EngineState::Running { port: lock.port, pid: lock.pid, packs: lock.packs };
+        let accel = lock.accel.unwrap_or(Accel::Cuda);
+        return EngineState::Running { port: lock.port, pid: lock.pid, packs: lock.packs, accel };
     }
-    let engine = paths::engine_dir();
-    if !engine.join(paths::SERVER_EXE).is_file() {
-        return EngineState::NoEngine { looked_in: engine.display().to_string() };
+    if choices(settings::load().device).is_empty() {
+        return EngineState::NoEngine { looked_in: paths::engine_dir().display().to_string() };
     }
     let models = paths::models_dir();
     if !models::pack_present(&models, Pack::Core) {
@@ -139,7 +188,7 @@ fn free_port() -> u16 {
 }
 
 /// The command line for the server, from what is on disk.
-pub fn command_line(engine: &Path, models: &Path, port: u16) -> Result<(PathBuf, Vec<String>, Vec<Pack>)> {
+pub fn command_line(engine: &Path, accel: Accel, models: &Path, port: u16) -> Result<(PathBuf, Vec<String>, Vec<Pack>)> {
     let exe = engine.join(paths::SERVER_EXE);
     if !exe.is_file() {
         bail!("the voice engine isn't installed ({} is missing)", exe.display());
@@ -150,7 +199,7 @@ pub fn command_line(engine: &Path, models: &Path, port: u16) -> Result<(PathBuf,
     let s = |p: PathBuf| p.display().to_string();
     let mut args = vec![
         s(backbone),
-        "--gpu".into(),
+        accel.flag().into(),
         "--host".into(),
         "127.0.0.1".into(),
         "--port".into(),
@@ -188,26 +237,54 @@ pub fn command_line(engine: &Path, models: &Path, port: u16) -> Result<(PathBuf,
     Ok((exe, args, packs))
 }
 
+/// Start the best engine for the current setting. If the NVIDIA engine can't start (no driver,
+/// an old card), fall back to the processor rather than leave Booth without a voice.
 pub async fn start(who: &str) -> Result<Zonos> {
-    let engine = paths::engine_dir();
+    let list = choices(settings::load().device);
+    if list.is_empty() {
+        bail!("the voice engine isn't installed ({} is missing); reinstalling Booth puts it back", paths::engine_dir().display());
+    }
+    let mut last = None;
+    for (i, choice) in list.iter().enumerate() {
+        match start_one(who, choice).await {
+            Ok(z) => return Ok(z),
+            Err(e) if i + 1 < list.len() => {
+                eprintln!("booth: the {:?} engine didn't start, trying the next one: {e:#}", choice.accel);
+                last = Some(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("no engine started")))
+}
+
+async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
+    let engine = choice.dir.clone();
     let models = paths::models_dir();
     let port = free_port();
-    let (exe, args, packs) = command_line(&engine, &models, port)?;
+    let (exe, args, packs) = command_line(&engine, choice.accel, &models, port)?;
 
     paths::ensure_dir(&paths::logs_dir())?;
     let log_path = paths::logs_dir().join("engine.log");
     let log = std::fs::File::create(&log_path)?;
 
-    let mut path_var = std::ffi::OsString::new();
-    for dir in [engine.join("bin"), engine.clone()] {
-        path_var.push(dir.as_os_str());
-        path_var.push(";");
-    }
+    // The engine's own DLLs first (Windows looks for them on PATH).
+    let mut dirs = vec![engine.join("bin"), engine.clone()];
     if let Some(old) = std::env::var_os("PATH") {
-        path_var.push(old);
+        dirs.extend(std::env::split_paths(&old));
     }
+    let path_var = std::env::join_paths(dirs).unwrap_or_default();
 
     let mut cmd = tokio::process::Command::new(&exe);
+    #[cfg(target_os = "linux")]
+    {
+        // The CPU backends are shared libraries next to the server.
+        let mut dirs = vec![engine.clone()];
+        if let Some(old) = std::env::var_os("LD_LIBRARY_PATH") {
+            dirs.extend(std::env::split_paths(&old));
+        }
+        cmd.env("LD_LIBRARY_PATH", std::env::join_paths(dirs).unwrap_or_default());
+    }
     cmd.args(&args)
         .current_dir(&engine)
         .env("PATH", path_var)
@@ -215,7 +292,7 @@ pub async fn start(who: &str) -> Result<Zonos> {
         .stdout(log.try_clone()?)
         .stderr(log)
         .kill_on_drop(false);
-    let ffmpeg = engine.join("ffmpeg.exe");
+    let ffmpeg = engine.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
     if ffmpeg.is_file() {
         cmd.env("ZONOS3_FFMPEG", &ffmpeg);
     }
@@ -226,6 +303,11 @@ pub async fn start(who: &str) -> Result<Zonos> {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
+    #[cfg(unix)]
+    {
+        // Its own process group, so a Ctrl-C or hangup aimed at the starter doesn't reach it.
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn().with_context(|| format!("starting {}", exe.display()))?;
     let pid = child.id().unwrap_or(0);
 
@@ -235,6 +317,7 @@ pub async fn start(who: &str) -> Result<Zonos> {
         started_by: who.into(),
         started_at: chrono::Utc::now(),
         packs,
+        accel: Some(choice.accel),
     };
     std::fs::write(paths::engine_lock_file(), serde_json::to_vec_pretty(&lock)?)?;
 
@@ -319,6 +402,29 @@ pub async fn stop_when_idle(wait: Duration) -> Result<bool> {
             .stderr(Stdio::null())
             .status()
             .await;
+    }
+    #[cfg(unix)]
+    {
+        // SIGTERM, then SIGKILL if it is still there after a few seconds. It is idle (see above).
+        let pid = lock.pid.to_string();
+        let _ = tokio::process::Command::new("kill").args(["-TERM", &pid]).status().await;
+        let mut alive = true;
+        for _ in 0..20 {
+            if !Zonos::new(lock.base_url()).health().await {
+                alive = false;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        // Only while it still answers, so a reused pid is never hit.
+        if alive {
+            let _ = tokio::process::Command::new("kill")
+                .args(["-KILL", &pid])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+        }
     }
     for _ in 0..40 {
         if !Zonos::new(lock.base_url()).health().await {

@@ -1,9 +1,14 @@
 name: Release
 
-# Builds Booth-Setup.exe and attaches it to the GitHub Release for the tag.
-# Push a tag like v0.1.0 to run it, or start it by hand on an existing tag.
-# The installer name never changes, so this link always serves the newest release:
+# Builds Booth for Windows, macOS (Apple Silicon) and Linux and attaches it to the GitHub Release
+# for the tag. Push a tag like v0.2.0 to run it, or start it by hand on an existing tag.
+# A tag with a dash (v0.2.0-rc.1) makes a prerelease, which "latest" links and auto-update skip.
+# The file names never change, so these links always serve the newest release:
 #   https://github.com/stepupgaming/booth/releases/latest/download/Booth-Setup.exe
+#   https://github.com/stepupgaming/booth/releases/latest/download/Booth-mac.dmg
+#   https://github.com/stepupgaming/booth/releases/latest/download/Booth-linux.AppImage
+# Installed copies look for updates at .../latest/download/latest.json, written by the last job.
+# Updates are signed only when the TAURI_SIGNING_PRIVATE_KEY secret is set.
 
 on:
   push:
@@ -11,26 +16,27 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach to, e.g. v0.1.0"
+        description: "Existing tag to build and attach to, e.g. v0.2.0"
         required: true
 
 permissions:
   contents: write
 
 env:
-  # The ZONOS3-Mini engine (zonos3-server.exe) is built from Zyphra's repo at this commit.
+  # The ZONOS3-Mini engine (zonos3-server) is built from Zyphra's repo at this commit.
   ZONOS3_REF: f9863b31d0af6f4390bba183a0c9231601b70d61
-  # RTX 20, 30, 40 and 50 series.
+  # NVIDIA engine: RTX 20, 30, 40 and 50 series. Booth downloads it on first run when the PC has
+  # an NVIDIA card (see crates/booth-core/src/models.rs, which pins this tag and the zip's sha256).
   CUDA_ARCHS: "75;86;89;120"
   CUDA_VERSION: "12.8.1"
-  # The built engine is kept as booth-engine.zip on a prerelease with this tag, so it is compiled
-  # once (about 1.5 hours) instead of on every release. Change the tag whenever ZONOS3_REF,
-  # CUDA_ARCHS or CUDA_VERSION changes, and the next release builds and stores a new one.
   ENGINE_TAG: engine-f9863b3-cuda12.8
+  # The engines that ship inside the app (CPU on Windows and Linux, Metal on macOS) are kept on this
+  # prerelease, so each is compiled once. Change the tag whenever ZONOS3_REF or the build flags change.
+  PORTABLE_TAG: engine-f9863b3-portable-1
 
 jobs:
-  engine:
-    name: Voice engine (CUDA)
+  cuda-engine:
+    name: NVIDIA engine (stored, downloaded by Booth)
     runs-on: windows-2022
     steps:
       - name: Look for the stored engine
@@ -39,16 +45,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download $env:ENGINE_TAG --repo ${{ github.repository }} --pattern booth-engine.zip
-          if ($LASTEXITCODE -eq 0) {
-            Expand-Archive booth-engine.zip -DestinationPath engine-dist
+          $assets = gh release view $env:ENGINE_TAG --repo ${{ github.repository }} --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -eq 0 -and ($assets -contains 'booth-engine.zip')) {
             "found=true" >> $env:GITHUB_OUTPUT
-            Write-Host "Using the engine stored on $env:ENGINE_TAG"
+            Write-Host "booth-engine.zip is on $env:ENGINE_TAG"
           } else {
             "found=false" >> $env:GITHUB_OUTPUT
             Write-Host "No stored engine on $env:ENGINE_TAG yet; building it"
           }
           exit 0
+
+      - uses: actions/checkout@v4
+        if: steps.stored.outputs.found != 'true'
+        with:
+          path: booth
 
       - name: Check out ZONOS3-Mini
         if: steps.stored.outputs.found != 'true'
@@ -61,14 +71,7 @@ jobs:
 
       - name: Patch for MSVC
         if: steps.stored.outputs.found != 'true'
-        shell: pwsh
-        run: |
-          # MSVC rejects a nested struct that shares its name with a member (C2380).
-          $h = 'zonos3/servers/ggml/src/zonos3.h'
-          $t = Get-Content $h -Raw
-          $t = $t -replace 'struct head \{ int layer = 0, head = 0; \};', 'struct probe_head { int layer = 0, head = 0; };'
-          $t = $t -replace 'std::vector<head> heads;', 'std::vector<probe_head> heads;'
-          Set-Content $h $t -NoNewline
+        run: python booth/scripts/patch-zonos3.py zonos3 --msvc
 
       - name: Install CUDA
         if: steps.stored.outputs.found != 'true'
@@ -94,62 +97,192 @@ jobs:
           cmake --build build --config Release -j 4 --target zonos3-server
           if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 
-      - name: Collect the engine
+      - name: Collect and store the engine
         if: steps.stored.outputs.found != 'true'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $out = New-Item -ItemType Directory -Force engine-dist
           Copy-Item build/zonos3-server.exe $out
           Get-ChildItem build -Recurse -Filter 'ggml*.dll' | Copy-Item -Destination $out
           $cuda = "$env:CUDA_PATH\bin"
           foreach ($n in 'cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll') { Copy-Item (Join-Path $cuda $n) $out }
-          # The MSVC runtime, so the engine starts without the VC++ redistributable.
           $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
           Copy-Item "$($crt.FullName)\*.dll" $out
           New-Item -ItemType Directory -Force "$out\laci_heads" | Out-Null
           Copy-Item zonos3/assets/laci_heads/zonos3_mini_mect60k_heads.json "$out\laci_heads"
           Copy-Item zonos3/LICENSE "$out\LICENSE-ZONOS3.txt"
-          Get-ChildItem $out -Recurse | Format-Table Name, Length
-
-      - name: Store the engine
-        if: steps.stored.outputs.found != 'true'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
           Compress-Archive -Path engine-dist\* -DestinationPath booth-engine.zip -CompressionLevel Optimal
-          # A prerelease, so it never becomes "latest" and the Booth-Setup.exe link is unaffected.
           gh release view $env:ENGINE_TAG --repo ${{ github.repository }} *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:ENGINE_TAG --repo ${{ github.repository }} --prerelease --latest=false `
               --title "Voice engine build ($env:ENGINE_TAG)" `
-              --notes "zonos3-server from Zyphra/ZONOS3-Mini@$env:ZONOS3_REF, CUDA $env:CUDA_VERSION, archs $env:CUDA_ARCHS. Used by the release workflow; not an app download."
+              --notes "zonos3-server from Zyphra/ZONOS3-Mini@$env:ZONOS3_REF, CUDA $env:CUDA_VERSION, archs $env:CUDA_ARCHS. Downloaded by Booth on PCs with an NVIDIA card; not an app download."
           }
           gh release upload $env:ENGINE_TAG booth-engine.zip --repo ${{ github.repository }} --clobber
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: engine
-          path: engine-dist
+          # A rebuilt zip has a new checksum: the one pinned in models.rs must be updated to match.
+          Write-Host "sha256: $((Get-FileHash booth-engine.zip -Algorithm SHA256).Hash.ToLower())  size: $((Get-Item booth-engine.zip).Length)"
 
   app:
-    name: Booth installer
-    needs: engine
-    runs-on: windows-2022
+    name: Booth for ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+            engine: engine-windows-x64-cpu.zip
+            config: src-tauri/tauri.release.conf.json
+          - name: macOS
+            os: macos-14
+            engine: engine-macos-arm64-metal.tar.gz
+            config: src-tauri/tauri.release.macos.conf.json
+          - name: Linux
+            os: ubuntu-22.04
+            engine: engine-linux-x64-cpu.tar.gz
+            config: src-tauri/tauri.release.linux.conf.json
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Tag
         id: tag
         shell: bash
-        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.tag.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      # ---------- the engine that ships inside the app ----------
+
+      - name: Look for the stored engine
+        id: stored
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download "$PORTABLE_TAG" --repo "${{ github.repository }}" --pattern "${{ matrix.engine }}" --dir . ; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Using ${{ matrix.engine }} from $PORTABLE_TAG"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No ${{ matrix.engine }} on $PORTABLE_TAG yet; building it"
+          fi
+
+      - name: Check out ZONOS3-Mini
+        if: steps.stored.outputs.found != 'true'
+        uses: actions/checkout@v4
         with:
-          name: engine
-          path: engine-dist
+          repository: Zyphra/ZONOS3-Mini
+          ref: ${{ env.ZONOS3_REF }}
+          path: zonos3
+          submodules: recursive
+
+      - name: Patch ZONOS3-Mini
+        if: steps.stored.outputs.found != 'true'
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Windows) python scripts/patch-zonos3.py zonos3 --msvc --backend-dl ;;
+            Linux)   python3 scripts/patch-zonos3.py zonos3 --backend-dl ;;
+            macOS)   echo "static Metal build: no patch" ;;
+          esac
+
+      - name: MSVC environment
+        if: steps.stored.outputs.found != 'true' && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # One server plus a CPU backend per instruction set (SSE4.2 up to AVX-512); the right one is
+      # picked when the engine starts.
+      - name: Build the CPU engine (Windows)
+        if: steps.stored.outputs.found != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ninja -y --no-progress
+          cmake -S zonos3/servers/ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CCACHE=OFF `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+          if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
+          cmake --build build --config Release -j 4 --target zonos3-server
+          if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+          $out = New-Item -ItemType Directory -Force engine-dist
+          Copy-Item build/zonos3-server.exe $out
+          Get-ChildItem build -Recurse -Filter 'ggml*.dll' | Copy-Item -Destination $out
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+          Copy-Item "$($crt.FullName)\*.dll" $out
+
+      - name: Build the CPU engine (Linux)
+        if: steps.stored.outputs.found != 'true' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          cmake -S zonos3/servers/ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CCACHE=OFF \
+            -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=$ORIGIN'
+          cmake --build build -j 4 --target zonos3-server
+          mkdir -p engine-dist
+          cp build/zonos3-server engine-dist/ 2>/dev/null || cp "$(find build -type f -name zonos3-server | head -1)" engine-dist/
+          find build -name 'libggml*.so*' -exec cp -L {} engine-dist/ \;
+          ldd engine-dist/zonos3-server || true
+
+      - name: Build the Metal engine (macOS)
+        if: steps.stored.outputs.found != 'true' && runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install ninja
+          # Static, with the Metal shaders built in. GGML_NATIVE targets the runner's M1, which every
+          # Apple Silicon Mac supports.
+          cmake -S zonos3/servers/ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DBUILD_SHARED_LIBS=OFF -DGGML_CCACHE=OFF \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=@executable_path'
+          cmake --build build -j 4 --target zonos3-server
+          mkdir -p engine-dist
+          cp build/zonos3-server engine-dist/ 2>/dev/null || cp "$(find build -type f -name zonos3-server | head -1)" engine-dist/
+          find build -name '*.dylib' -exec cp -L {} engine-dist/ \;
+          otool -L engine-dist/zonos3-server
+
+      - name: Store the engine
+        if: steps.stored.outputs.found != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p engine-dist/laci_heads
+          cp zonos3/assets/laci_heads/zonos3_mini_mect60k_heads.json engine-dist/laci_heads/
+          cp zonos3/LICENSE engine-dist/LICENSE-ZONOS3.txt
+          ls -la engine-dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            pwsh -NoProfile -Command "Compress-Archive -Path engine-dist/* -DestinationPath '${{ matrix.engine }}'"
+          else
+            tar -czf "${{ matrix.engine }}" -C engine-dist .
+          fi
+          # Every leg may get here first, so creating the release is allowed to fail.
+          gh release create "$PORTABLE_TAG" --repo "${{ github.repository }}" --prerelease --latest=false \
+            --title "Portable engine builds ($PORTABLE_TAG)" \
+            --notes "zonos3-server from Zyphra/ZONOS3-Mini@$ZONOS3_REF for the CPU (Windows, Linux) and Metal (macOS). Used by the release workflow; not an app download." || true
+          gh release upload "$PORTABLE_TAG" "${{ matrix.engine }}" --repo "${{ github.repository }}" --clobber
+          rm -rf engine-dist
+
+      - name: Unpack the engine
+        shell: bash
+        run: |
+          rm -rf engine-dist && mkdir engine-dist
+          case "${{ matrix.engine }}" in
+            *.zip) pwsh -NoProfile -Command "Expand-Archive '${{ matrix.engine }}' -DestinationPath engine-dist" ;;
+            *)     tar -xzf "${{ matrix.engine }}" -C engine-dist ;;
+          esac
+          ls -la engine-dist
+
+      # ---------- the app ----------
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -163,26 +296,108 @@ jobs:
       - name: Install packages
         run: pnpm install --frozen-lockfile
 
+      - name: Version from the tag
+        shell: bash
+        run: |
+          node -e '
+            const f = "apps/native/src-tauri/tauri.conf.json";
+            const c = JSON.parse(require("fs").readFileSync(f, "utf8"));
+            c.version = process.argv[1];
+            require("fs").writeFileSync(f, JSON.stringify(c, null, 2));
+          ' "${{ steps.tag.outputs.version }}"
+
       - name: Build booth-mcp and booth.mcpb
+        if: runner.os != 'Linux'
         shell: pwsh
         run: ./scripts/build-mcpb.ps1
 
-      - name: Build the installer
-        run: pnpm tauri build --config src-tauri/tauri.release.conf.json
+      - name: Build booth-mcp
+        if: runner.os == 'Linux'
+        run: cargo build --release -p booth-mcp
 
-      - name: Rename and publish
-        shell: pwsh
+      - name: Build the app
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          extra=()
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            extra=(--config src-tauri/tauri.updater.conf.json)
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: this build can't auto-update anyone."
+          fi
+          pnpm tauri build --config "${{ matrix.config }}" "${extra[@]}"
+
+      - name: Collect
+        shell: bash
+        run: |
+          b=target/release/bundle
+          mkdir -p out
+          one() { ls $1 2>/dev/null | head -1; }
+          case "${{ runner.os }}" in
+            Windows)
+              f=$(one "$b/nsis/*-setup.exe"); cp "$f" out/Booth-Setup.exe
+              [ -f "$f.sig" ] && cp "$f.sig" out/Booth-Setup.exe.sig
+              cp dist/booth.mcpb out/booth.mcpb ;;
+            macOS)
+              cp "$(one "$b/dmg/*.dmg")" out/Booth-mac.dmg
+              f=$(one "$b/macos/*.app.tar.gz")
+              if [ -n "$f" ]; then cp "$f" out/Booth-mac.app.tar.gz; cp "$f.sig" out/Booth-mac.app.tar.gz.sig; fi
+              cp dist/booth.mcpb out/booth-mac.mcpb ;;
+            Linux)
+              f=$(one "$b/appimage/*.AppImage"); cp "$f" out/Booth-linux.AppImage
+              [ -f "$f.sig" ] && cp "$f.sig" out/Booth-linux.AppImage.sig
+              cp "$(one "$b/deb/*.deb")" out/Booth-linux.deb ;;
+          esac
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: booth-${{ runner.os }}
+          path: out
+
+  publish:
+    name: Publish the release
+    needs: [cuda-engine, app]
+    # A platform that failed is left out; Windows is required.
+    if: always() && needs.cuda-engine.result == 'success'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: booth-*
+          path: out
+          merge-multiple: true
+
+      - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          $tag = '${{ steps.tag.outputs.tag }}'
-          $setup = Get-ChildItem target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
-          New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item $setup.FullName out/Booth-Setup.exe
-          Copy-Item dist/booth.mcpb out/booth.mcpb
-          Get-ChildItem out | Format-Table Name, Length
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title "Booth $($tag.TrimStart('v'))" --generate-notes
-          }
-          gh release upload $tag out/Booth-Setup.exe out/booth.mcpb --clobber
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          ls -la out
+          test -f out/Booth-Setup.exe || { echo "::error::The Windows build is missing"; exit 1; }
+
+          # latest.json for the updater: one entry per platform that has a signed update.
+          url="https://github.com/$REPO/releases/download/$tag"
+          node -e '
+            const fs = require("fs");
+            const [version, url] = process.argv.slice(1);
+            const files = { "windows-x86_64": "Booth-Setup.exe", "darwin-aarch64": "Booth-mac.app.tar.gz", "linux-x86_64": "Booth-linux.AppImage" };
+            const platforms = {};
+            for (const [p, f] of Object.entries(files)) {
+              const sig = `out/${f}.sig`;
+              if (fs.existsSync(sig)) platforms[p] = { signature: fs.readFileSync(sig, "utf8").trim(), url: `${url}/${f}` };
+            }
+            if (!Object.keys(platforms).length) { console.log("No signed updates in this build; skipping latest.json"); process.exit(0); }
+            fs.writeFileSync("out/latest.json", JSON.stringify({ version, notes: `Booth ${version}`, pub_date: new Date().toISOString(), platforms }, null, 2));
+            console.log(fs.readFileSync("out/latest.json", "utf8"));
+          ' "$version" "$url"
+
+          pre=()
+          case "$tag" in *-*) pre=(--prerelease) ;; esac
+          gh release view "$tag" --repo "$REPO" > /dev/null 2>&1 || \
+            gh release create "$tag" --repo "$REPO" --title "Booth $version" --generate-notes "${pre[@]}"
+          gh release upload "$tag" --repo "$REPO" --clobber $(ls out/* | grep -v '\.sig$')

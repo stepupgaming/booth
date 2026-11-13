@@ -1,8 +1,12 @@
 // Typed wrappers for the Tauri commands in apps/native/src-tauri/src/lib.rs.
+import { getVersion } from "@tauri-apps/api/app";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Pack = "core" | "exact" | "full_decoder";
+export type Pack = "core" | "gpu_engine" | "exact" | "full_decoder";
+/** What the engine computes on: an NVIDIA card, Apple's Metal, or the processor. */
+export type Accel = "cuda" | "metal" | "cpu";
+export type Device = "auto" | "cpu";
 export type Mode = "exact" | "shapeable";
 export type SpeakerMode = "reference" | "embedding";
 
@@ -10,7 +14,7 @@ export type EngineState =
   | { state: "no_engine"; looked_in: string }
   | { state: "no_models"; looked_in: string }
   | { state: "stopped" }
-  | { state: "running"; port: number; pid: number; packs: Pack[] };
+  | { state: "running"; port: number; pid: number; packs: Pack[]; accel: Accel };
 
 export interface Settings {
   default_voice: string | null;
@@ -18,6 +22,8 @@ export interface Settings {
   mcp_allow_cloning: boolean;
   keep_engine_running: boolean;
   laci: boolean;
+  /** "auto" uses the graphics card when Booth can; "cpu" always the processor. */
+  device: Device;
 }
 
 export interface Overview {
@@ -31,12 +37,30 @@ export interface Overview {
 }
 
 export interface SystemCheck {
+  /** An NVIDIA card (Windows, Linux) or the Apple chip (macOS). */
   gpu: string | null;
   vram_gb: number | null;
+  gpu_kind: "nvidia" | "apple" | "none";
+  cpu: string | null;
+  cpu_threads: number;
+  ram_gb: number;
   disk: string | null;
   disk_free_gb: number | null;
   os: string | null;
+  /** "windows", "macos" or "linux". */
+  platform: string;
   engine_found: boolean;
+}
+
+export interface UpdateInfo {
+  version: string;
+  current: string;
+  notes: string | null;
+}
+
+export interface UpdateProgress {
+  done_bytes: number;
+  total_bytes: number | null;
 }
 
 export interface PackInfo {
@@ -181,13 +205,23 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (s: Settings) => invoke<Settings>("save_settings", { s }),
   claudeInfo: () => invoke<ClaudeInfo>("claude_info"),
-  /** Show a take or Booth folder in Explorer. */
+  /** Show a take or Booth folder in the file manager. */
   reveal: (path: string) => invoke<void>("reveal", { path }),
   /** Open booth.mcpb in Claude Desktop (it asks the user to confirm). */
   installMcpb: () => invoke<void>("install_mcpb"),
   onDownload: (cb: (e: DownloadEvent) => void): Promise<UnlistenFn> =>
     listen<DownloadEvent>("download", (ev) => cb(ev.payload)),
+  version: () => getVersion(),
+  /** A newer Booth on GitHub, or null. */
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  /** Download, verify and install the update, then restart Booth. */
+  installUpdate: () => invoke<void>("install_update"),
+  onUpdateProgress: (cb: (e: UpdateProgress) => void): Promise<UnlistenFn> =>
+    listen<UpdateProgress>("update-progress", (ev) => cb(ev.payload)),
 };
+
+/** Where the engine runs, in words: "graphics card" or "processor". */
+export const accelWhere = (a: Accel | undefined) => (a === "cpu" ? "processor" : "graphics card");
 
 /** A local file as a URL the web view can load (asset protocol). */
 export const fileUrl = (path: string) => convertFileSrc(path);

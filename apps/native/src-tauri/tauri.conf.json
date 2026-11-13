@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Booth",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "identifier": "com.nofacetube.booth",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -25,19 +25,40 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$LOCALDATA/NoFaceTube/Booth/**"]
+        "scope": [
+          "$LOCALDATA/NoFaceTube/Booth/**"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-"
+    },
+    "shortDescription": "Local text to speech and voice cloning",
+    "category": "Utility"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBENTY0MEVBQjM3MTMwRDAKUldUUU1IR3o2a0JXRGFjSURwalI4UzBhckdXUnY5ckxETlZBZnlGZDQwKzduZW9LYXNHSkxIdHQK",
+      "endpoints": [
+        "https://github.com/stepupgaming/booth/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

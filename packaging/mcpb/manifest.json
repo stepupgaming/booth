@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "booth",
   "display_name": "Booth by NoFaceTube",
-  "version": "0.1.1",
-  "description": "Let Claude speak in natural voices on your own PC: lines, scripts and designed voices with the local ZONOS3-Mini engine.",
-  "long_description": "Booth runs the ZONOS3-Mini voice model on your computer. With this extension Claude can speak a line, render a script with several voices, design new voices (older, deeper, a British accent) and list your takes. Every take is saved as a WAV file in your Booth takes folder. Nothing leaves your PC.\n\nInstall the Booth app first: it downloads the voice model and runs the engine. Cloning a voice from a clip is off until you turn on \"Let Claude clone voices\" in Booth's settings.",
+  "version": "0.2.0",
+  "description": "Let Claude speak in natural voices on your own computer: lines, scripts and designed voices with the local ZONOS3-Mini engine.",
+  "long_description": "Booth runs the ZONOS3-Mini voice model on your computer. With this extension Claude can speak a line, render a script with several voices, design new voices (older, deeper, a British accent) and list your takes. Every take is saved as a WAV file in your Booth takes folder. Nothing leaves your computer.\n\nInstall the Booth app first: it downloads the voice model and runs the engine. Cloning a voice from a clip is off until you turn on \"Let Claude clone voices\" in Booth's settings.",
   "author": {
     "name": "NoFaceTube",
     "url": "https://nofacetube.com"

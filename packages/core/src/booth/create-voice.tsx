@@ -805,12 +805,12 @@ export function CreateVoice() {
                     <span className="badge">Shapeable</span>: the trimmed clip and its voice fingerprint.
                   </>
                 )}{" "}
-                Kept on this PC only.
+                Kept on this computer only.
               </>
             ) : (
               <>
                 Saves as <span className="badge">Shapeable</span>: {baseVoice?.name ?? "the base voice"} with your settings baked in. Kept on
-                this PC only.
+                this computer only.
               </>
             )}
           </div>

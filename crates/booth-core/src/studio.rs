@@ -31,9 +31,10 @@ async fn pick_voice(z: &Zonos, key: Option<&str>) -> Result<voices::Voice> {
         Some(k) => voices::find(Some(z), &k).await,
         None => {
             let all = voices::all(Some(z)).await;
-            // Prefer an English default voice when nothing is chosen.
+            // Nothing chosen: Rupert, the voice the app opens with, then any English voice.
             all.iter()
-                .find(|v| v.language.as_deref() == Some("English"))
+                .find(|v| v.name == "Rupert")
+                .or_else(|| all.iter().find(|v| v.language.as_deref() == Some("English")))
                 .or(all.first())
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("no voices yet"))

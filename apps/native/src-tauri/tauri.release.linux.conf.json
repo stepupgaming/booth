@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "targets": [
+      "appimage",
+      "deb"
+    ],
+    "resources": {
+      "../../../engine-dist/": "engine-cpu/",
+      "../../../target/release/booth-mcp": "booth-mcp"
+    }
+  }
+}

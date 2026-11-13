@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type DownloadEvent, errText, gb, type PackInfo, type Settings as S } from "@workspace/core/booth/api";
+import { accelWhere, api, type DownloadEvent, errText, gb, type PackInfo, type Settings as S } from "@workspace/core/booth/api";
 import { useBooth } from "@workspace/core/booth/store";
 import { Dropdown, Switch, usePref, useToast } from "@workspace/core/booth/ui";
 
@@ -84,7 +84,7 @@ function Mcp() {
               ? "Booth is set up in Claude Desktop. Restart Claude if its tools don’t show."
               : claude?.desktop_found
                 ? "Opens the Booth extension in Claude Desktop, which asks you to confirm."
-                : "Claude Desktop wasn’t found on this PC. Install it first, or use the snippet."
+                : "Claude Desktop wasn’t found on this computer. Install it first, or use the snippet."
           }
           title={claude?.connected ? "Connected" : "One-click install"}
         >
@@ -149,7 +149,12 @@ function Models() {
   const [dl, setDl] = useState<DownloadEvent | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
-  const state = overview?.engine.state;
+  const system = useBooth((s) => s.system);
+  const engine = overview?.engine;
+  const state = engine?.state;
+  const where = accelWhere(engine?.state === "running" ? engine.accel : undefined);
+  // The NVIDIA engine row only where it can help.
+  const shown = (packs ?? []).filter((p) => p.pack !== "gpu_engine" || p.present || system?.gpu_kind === "nvidia");
 
   useEffect(() => {
     api.packInfo().then(setPacks).catch(() => setPacks([]));
@@ -177,7 +182,7 @@ function Models() {
     try {
       await api.engineStop();
       await refresh();
-      toast.ok("Engine stopped. The GPU is free.");
+      toast.ok("Engine stopped. Its memory is free.");
     } catch (e) {
       toast.bad(errText(e));
     } finally {
@@ -190,23 +195,27 @@ function Models() {
       <Row
         sub={
           state === "running"
-            ? "Loaded on the GPU. Stopping waits for any line in progress to finish."
-            : "Not using the GPU. It wakes up on your next line."
+            ? `Loaded on the ${where}. Stopping waits for any line in progress to finish.`
+            : "Not running. It wakes up on your next line."
         }
         title={state === "running" ? "Engine running" : "Engine asleep"}
       >
         {state === "running" ? (
           <button className="btn ghost" disabled={stopping} onClick={stop} type="button">
-            {stopping ? "Stopping…" : "Stop and free the GPU"}
+            {stopping ? "Stopping…" : "Stop the engine"}
           </button>
         ) : null}
       </Row>
       <div className="divider" />
-      {(packs ?? []).map((p) => {
+      {shown.map((p) => {
         const mine = downloading === p.pack && dl?.pack === p.pack;
         const pct = mine && dl && dl.total_bytes ? Math.round((dl.done_bytes / dl.total_bytes) * 100) : 0;
         return (
-          <Row key={p.pack} sub={`${gb(p.bytes)} · ${p.files.length} files`} title={p.label}>
+          <Row
+            key={p.pack}
+            sub={p.pack === "gpu_engine" ? `${gb(p.bytes)} · runs Booth on your NVIDIA card` : `${gb(p.bytes)} · ${p.files.length} files`}
+            title={p.label}
+          >
             {p.present ? (
               <span className="badge ok">Installed</span>
             ) : downloading === p.pack ? (
@@ -234,6 +243,78 @@ function Models() {
         </Row>
       ) : null}
     </>
+  );
+}
+
+/** Graphics card (when Booth has one to use) or the processor. Applies on the engine's next start. */
+function RunOn({ settings, save }: { settings: S | undefined; save: (p: Partial<S>) => Promise<void> }) {
+  const toast = useToast();
+  const system = useBooth((s) => s.system);
+  const overview = useBooth((s) => s.overview);
+  const refresh = useBooth((s) => s.refresh);
+  const gpu = system?.gpu_kind === "apple" || (system?.gpu_kind === "nvidia" && system.platform === "windows");
+  if (!gpu) {
+    return null;
+  }
+  const change = async (device: string) => {
+    await save({ device: device === "cpu" ? "cpu" : "auto" });
+    if (overview?.engine.state === "running") {
+      try {
+        await api.engineRestart();
+        await refresh();
+        toast.ok(device === "cpu" ? "Now on the processor" : "Now on the graphics card");
+      } catch (e) {
+        toast.bad(errText(e));
+      }
+    }
+  };
+  return (
+    <>
+      <Row sub="The graphics card is faster. The processor keeps the card free for games or video work." title="Run on">
+        <Dropdown
+          label="Run on"
+          onChange={change}
+          options={[
+            { value: "auto", label: "Graphics card" },
+            { value: "cpu", label: "Processor" },
+          ]}
+          style={{ width: 170 }}
+          value={settings?.device ?? "auto"}
+        />
+      </Row>
+      <div className="divider" />
+    </>
+  );
+}
+
+function Updates() {
+  const toast = useToast();
+  const version = useBooth((s) => s.version);
+  const update = useBooth((s) => s.update);
+  const checkUpdate = useBooth((s) => s.checkUpdate);
+  const [checking, setChecking] = useState(false);
+  const check = async () => {
+    setChecking(true);
+    try {
+      const u = await checkUpdate();
+      if (!u) {
+        toast.ok("Booth is up to date");
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <Row
+      sub={update ? `Version ${update.version} is ready. Use the button at the bottom left to install it.` : "Booth checks GitHub for a new version when it starts."}
+      title={version ? `Booth ${version}` : "Booth"}
+    >
+      <button className="btn ghost sm" disabled={checking} onClick={check} type="button">
+        {checking ? "Checking…" : "Check for updates"}
+      </button>
+    </Row>
   );
 }
 
@@ -289,7 +370,7 @@ export function Settings() {
         >
           <Switch label="Guard against skips" on={!!settings?.laci} onChange={(v) => save({ laci: v })} />
         </Row>
-        <Row sub="Faster first line next time, but the model keeps its GPU memory." title="Keep the engine loaded when Booth closes">
+        <Row sub="Faster first line next time, but the model keeps its memory." title="Keep the engine loaded when Booth closes">
           <Switch
             label="Keep the engine loaded"
             on={!!settings?.keep_engine_running}
@@ -298,8 +379,13 @@ export function Settings() {
         </Row>
       </Section>
 
-      <Section sub="Booth runs ZONOS3-Mini on your GPU. Nothing leaves this PC." title="Models">
+      <Section sub="Booth runs ZONOS3-Mini on this computer. Nothing leaves it." title="Models">
+        <RunOn save={save} settings={settings} />
         <Models />
+      </Section>
+
+      <Section title="Updates">
+        <Updates />
       </Section>
 
       <Section sub="Let Claude speak with your Booth voices. Takes land in the same folder." title="Use Booth from Claude">

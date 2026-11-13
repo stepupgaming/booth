@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "resources": {
+      "../../../engine-dist/": "engine-metal/",
+      "../../../target/release/booth-mcp": "booth-mcp",
+      "../../../dist/booth.mcpb": "booth.mcpb"
+    }
+  }
+}

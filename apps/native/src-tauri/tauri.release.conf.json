@@ -1,7 +1,10 @@
 {
   "bundle": {
+    "targets": [
+      "nsis"
+    ],
     "resources": {
-      "../../../engine-dist/": "engine/",
+      "../../../engine-dist/": "engine-cpu/",
       "../../../target/release/booth-mcp.exe": "booth-mcp.exe",
       "../../../dist/booth.mcpb": "booth.mcpb"
     },
