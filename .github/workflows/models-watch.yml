@@ -37,14 +37,17 @@ jobs:
             echo
             echo "## Engine source (servers/ggml on GitHub)"
             ref=$(sed -n 's/^ *ZONOS3_REF: *//p' .github/workflows/release.yml)
-            files=$(gh api "repos/Zyphra/ZONOS3-Mini/compare/$ref...main" --jq '[.files[].filename | select(startswith("servers/ggml/"))] | .[]' 2>&1)
+            # Commits on main that touch the engine, newer than the pinned one.
+            since=$(gh api "repos/Zyphra/ZONOS3-Mini/commits/$ref" --jq .commit.committer.date) &&
+            files=$(gh api "repos/Zyphra/ZONOS3-Mini/commits?sha=main&path=servers/ggml&per_page=100&since=$since" \
+              --jq ".[] | select(.sha != \"$ref\") | \"\(.sha[0:8]) \(.commit.author.date[0:10]) \(.commit.message | split(\"\n\")[0])\"" 2>&1)
             engine_err=$?
             if [ $engine_err -ne 0 ]; then
               echo "Couldn't compare: $files"
             elif [ -z "$files" ]; then
               echo "No changes since the pinned commit ${ref:0:10}."
             else
-              echo "Changed since the pinned commit ${ref:0:10} ([compare](https://github.com/Zyphra/ZONOS3-Mini/compare/$ref...main)):"
+              echo "$(wc -l <<<"$files") commit(s) since the pinned commit ${ref:0:10} ([compare](https://github.com/Zyphra/ZONOS3-Mini/compare/$ref...main)):"
               echo '```'; echo "$files"; echo '```'
             fi
             echo "MODELS=$models" >> "$GITHUB_ENV"
