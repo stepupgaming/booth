@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { api } from "@workspace/core/booth/api";
 import { CreateVoice } from "@workspace/core/booth/create-voice";
 import { Library } from "@workspace/core/booth/library";
 import { Settings } from "@workspace/core/booth/settings";
@@ -50,6 +51,24 @@ export function BoothApp() {
     };
     boot().finally(() => setBooted(true));
   }, [refresh, loadSystem, loadClaude]);
+
+  // Into booth.log: when the app leaves and comes back (a phone freezes or kills apps in the
+  // background) and any error the page itself hits.
+  useEffect(() => {
+    if (preview) return;
+    const vis = () => void api.logNote(document.hidden ? "app went to the background" : "app is back on screen");
+    const onErr = (e: ErrorEvent) => void api.logNote(`page error: ${e.message} (${e.filename}:${e.lineno})`);
+    const onRej = (e: PromiseRejectionEvent) =>
+      void api.logNote(`unhandled: ${e.reason instanceof Error ? e.reason.message : String(e.reason)}`);
+    document.addEventListener("visibilitychange", vis);
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    return () => {
+      document.removeEventListener("visibilitychange", vis);
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  }, [preview]);
 
   const [inSetup, setInSetup] = useState(false);
   const state = overview?.engine.state;

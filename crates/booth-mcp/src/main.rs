@@ -391,6 +391,7 @@ async fn main() -> anyhow::Result<()> {
         println!("booth-mcp {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    booth_core::diag::set_source("mcp");
     let service = Booth::new().serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())

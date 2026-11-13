@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod controls;
+pub mod diag;
 pub mod engine;
 pub mod models;
 pub mod paths;

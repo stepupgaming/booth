@@ -219,6 +219,10 @@ export const api = {
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   /** Download, verify and install the update, then restart Booth. */
   installUpdate: () => invoke<void>("install_update"),
+  /** booth.log and the engine's log, for Settings → Log. */
+  readLog: () => invoke<string>("read_log"),
+  /** One line into booth.log. Never throws: logging must not break anything. */
+  logNote: (text: string) => invoke<void>("log_note", { text }).catch(() => undefined),
   onUpdateProgress: (cb: (e: UpdateProgress) => void): Promise<UnlistenFn> =>
     listen<UpdateProgress>("update-progress", (ev) => cb(ev.payload)),
 };

@@ -202,14 +202,50 @@ impl Zonos {
     /// Embedding (`.npy`) of a clip: caches it in a throwaway session, then reads the embedding back.
     pub async fn embed_clip(&self, audio: &[u8], name: &str) -> Result<Vec<u8>> {
         let _busy = crate::engine::BusyGuard::new();
+        let t0 = std::time::Instant::now();
+        crate::diag::note(format!("embed clip ({} KB): sent", audio.len() / 1024));
         let session = format!("booth-{}", uuid::Uuid::new_v4());
-        let sp = self.add_speaker(&session, name, audio, name).await?;
-        self.embedding_npy(&sp.id, Some(&session)).await
+        let r = async {
+            let sp = self.add_speaker(&session, name, audio, name).await?;
+            self.embedding_npy(&sp.id, Some(&session)).await
+        }
+        .await;
+        let secs = t0.elapsed().as_secs_f64();
+        match &r {
+            Ok(_) => crate::diag::note(format!("embed clip: ok in {secs:.1} s")),
+            Err(e) => crate::diag::note(format!("embed clip: FAILED after {secs:.1} s: {e:#}")),
+        }
+        r
     }
 
     /// Synthesize a whole take as a WAV file.
     pub async fn generate(&self, req: &GenerateRequest) -> Result<Audio> {
         let _busy = crate::engine::BusyGuard::new();
+        let t0 = std::time::Instant::now();
+        let what = format!(
+            "generate {} chars, {}",
+            req.text.chars().count(),
+            match (&req.speaker_embedding_id, &req.speaker_audio_base64, &req.speaker_embedding_base64) {
+                (Some(id), _, _) => format!("voice {id}"),
+                (_, Some(_), _) => "reference clip".into(),
+                (_, _, Some(_)) => "embedding".into(),
+                _ => "default voice".into(),
+            }
+        );
+        crate::diag::note(format!("{what}: sent"));
+        let r = self.generate_inner(req).await;
+        let secs = t0.elapsed().as_secs_f64();
+        match &r {
+            Ok(a) => crate::diag::note(format!(
+                "{what}: ok in {secs:.1} s, {:.1} s of audio",
+                wav_seconds(&a.wav)
+            )),
+            Err(e) => crate::diag::note(format!("{what}: FAILED after {secs:.1} s: {e:#}")),
+        }
+        r
+    }
+
+    async fn generate_inner(&self, req: &GenerateRequest) -> Result<Audio> {
         let mut body = serde_json::to_value(req)?;
         body["stream"] = Value::Bool(false);
         body["format"] = Value::String("wav".into());
@@ -232,6 +268,20 @@ impl Zonos {
         let wav = r.bytes().await?.to_vec();
         Ok(Audio { wav, seed, decoder })
     }
+}
+
+/// Length of a PCM WAV from its header (0 if it can't tell).
+fn wav_seconds(wav: &[u8]) -> f64 {
+    if wav.len() < 44 {
+        return 0.0;
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([wav[i], wav[i + 1]]) as f64;
+    let rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]) as f64;
+    let bytes_per_frame = u16_at(22) * u16_at(34) / 8.0;
+    if rate == 0.0 || bytes_per_frame == 0.0 {
+        return 0.0;
+    }
+    (wav.len() - 44) as f64 / bytes_per_frame / rate
 }
 
 /// A 1-D float32 array as a `.npy` file (format 1.0).

@@ -318,6 +318,65 @@ function Updates() {
   );
 }
 
+/** Booth's log and the engine's: what to send when something got stuck or failed. */
+function LogView() {
+  const toast = useToast();
+  const [text, setText] = useState<string | null>(null);
+  const load = () =>
+    api
+      .readLog()
+      .then(setText)
+      .catch((e) => toast.bad(errText(e)));
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text ?? (await api.readLog()));
+      toast.ok("Log copied");
+    } catch (e) {
+      toast.bad(errText(e));
+    }
+  };
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn ghost sm" onClick={() => (text === null ? load() : setText(null))} type="button">
+          {text === null ? "Show log" : "Hide log"}
+        </button>
+        {text === null ? null : (
+          <button className="btn ghost sm" onClick={load} type="button">
+            Refresh
+          </button>
+        )}
+        <button className="btn ghost sm" onClick={copy} type="button">
+          Copy log
+        </button>
+      </div>
+      {text === null ? null : (
+        <pre
+          className="mono"
+          ref={(el) => {
+            if (el) el.scrollTop = el.scrollHeight;
+          }}
+          style={{
+            margin: 0,
+            maxHeight: 360,
+            overflow: "auto",
+            fontSize: 11,
+            lineHeight: 1.55,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            padding: 12,
+            borderRadius: 12,
+            background: "rgba(0,0,0,0.35)",
+            color: "var(--b-muted)",
+          }}
+        >
+          {text || "Nothing logged yet."}
+        </pre>
+      )}
+    </>
+  );
+}
+
 export function Settings() {
   const toast = useToast();
   const overview = useBooth((s) => s.overview);
@@ -399,6 +458,10 @@ export function Settings() {
           />
           <span>Let Claude clone voices from audio files (off by default; clones still need your permission to use the voice).</span>
         </label>
+      </Section>
+
+      <Section sub="What Booth asked the voice engine to do and how it went. Copy it into a bug report if something gets stuck." title="Log">
+        <LogView />
       </Section>
     </>
   );

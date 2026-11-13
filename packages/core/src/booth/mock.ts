@@ -255,6 +255,18 @@ export function installMock() {
             await emit("update-progress", { done_bytes: i * 1e6, total_bytes: 1e7 });
           }
           return null;
+        case "read_log":
+          return [
+            "== booth.log (sample)",
+            "2026-11-13 16:00:01.120 app[14666] app 0.2.0 started on android aarch64",
+            "2026-11-13 16:00:03.402 app[14666] engine: not running, starting it for app",
+            "2026-11-13 16:00:21.871 app[14666] engine: ready, pid 14805, in 18.5 s",
+            "2026-11-13 16:00:30.010 app[14666] generate 58 chars, voice default_40a3: sent",
+            "2026-11-13 16:00:34.300 app[14666] generate 58 chars, voice default_40a3: ok in 4.3 s, 3.6 s of audio",
+            "2026-11-13 16:02:44.206 app[14666] ui: app went to the background",
+          ].join("\n");
+        case "log_note":
+          return null;
         case "engine_restart":
           return overview().engine;
         case "claude_info":

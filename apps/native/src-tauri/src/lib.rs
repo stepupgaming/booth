@@ -680,6 +680,19 @@ async fn reveal(app: AppHandle, path: PathBuf) -> Res<()> {
     }
 }
 
+/// Booth's log and the engine's, newest last, for the Settings page and bug reports.
+#[tauri::command]
+async fn read_log() -> Res<String> {
+    Ok(booth_core::diag::report(300))
+}
+
+/// A line from the page (it went to the background, an error it showed) into booth.log.
+#[tauri::command]
+async fn log_note(text: String) -> Res<()> {
+    booth_core::diag::note(format!("ui: {}", text.chars().take(500).collect::<String>()));
+    Ok(())
+}
+
 /// Opens booth.mcpb with Claude Desktop, which asks the user to confirm the install.
 #[tauri::command]
 async fn install_mcpb(app: AppHandle) -> Res<()> {
@@ -729,6 +742,13 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "android")]
             android_setup(app.handle())?;
+            booth_core::diag::set_source("app");
+            booth_core::diag::note(format!(
+                "app {} started on {} {}",
+                app.package_info().version,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ));
             allow_media(app.handle());
             // So booth-mcp, installed in Claude's own folder, finds the engine that shipped here.
             if let Ok(dir) = app.path().resource_dir() {
@@ -777,6 +797,8 @@ pub fn run() {
             install_mcpb,
             check_update,
             install_update,
+            read_log,
+            log_note,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Booth")

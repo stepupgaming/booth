@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import { create } from "zustand";
-import { errText } from "@workspace/core/booth/api";
+import { api as boothApi, errText } from "@workspace/core/booth/api";
 
 // ---------- background and brand ----------
 
@@ -635,7 +635,13 @@ export function ToastHost({ children }: { children: ReactNode }) {
     timer.current = setTimeout(() => setT(null), bad ? 9000 : 3500);
   }, []);
   const api = useMemo(
-    () => ({ ok: (m: string) => show(m, false), bad: (m: string) => show(m, true) }),
+    () => ({
+      ok: (m: string) => show(m, false),
+      bad: (m: string) => {
+        show(m, true);
+        void boothApi.logNote(`showed error: ${m}`);
+      },
+    }),
     [show]
   );
   return (

@@ -171,7 +171,22 @@ pub async fn ensure(who: &str) -> Result<Zonos> {
     // Someone may have finished starting it between our check and taking the marker.
     let result = match running().await {
         Some((_, z)) => Ok(z),
-        None => start(who).await,
+        None => {
+            match read_lock() {
+                None => crate::diag::note(format!("engine: not running, starting it for {who}")),
+                Some(l) => crate::diag::note(format!(
+                    "engine: pid {} on port {} doesn't answer ({}), starting a new one for {who}",
+                    l.pid,
+                    l.port,
+                    if crate::diag::pid_alive(l.pid) { "process still there" } else { "process is gone" }
+                )),
+            }
+            let r = start(who).await;
+            if let Err(e) = &r {
+                crate::diag::note(format!("engine: start failed: {e:#}"));
+            }
+            r
+        }
     };
     std::fs::remove_file(&marker).ok();
     result
@@ -301,7 +316,11 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
 
     paths::ensure_dir(&paths::logs_dir())?;
     let log_path = paths::logs_dir().join("engine.log");
+    // Keep the last run's output: after a crash, that's the log worth reading.
+    let _ = std::fs::rename(&log_path, paths::logs_dir().join("engine.prev.log"));
     let log = std::fs::File::create(&log_path)?;
+    let t0 = Instant::now();
+    crate::diag::note(format!("engine: starting {} on port {port} for {who}", format!("{:?}", choice.accel).to_lowercase()));
 
     // The engine's own DLLs first (Windows looks for them on PATH).
     let mut dirs = vec![engine.join("bin"), engine.clone()];
@@ -359,12 +378,14 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         if z.health().await {
+            crate::diag::note(format!("engine: ready, pid {pid}, in {:.1} s", t0.elapsed().as_secs_f64()));
             // Detach: the engine outlives this process on purpose.
             std::mem::forget(child);
             return Ok(z);
         }
         if let Ok(Some(status)) = child.try_wait() {
             let tail = log_tail(&log_path, 15);
+            crate::diag::note(format!("engine: stopped while loading ({status})"));
             std::fs::remove_file(paths::engine_lock_file()).ok();
             bail!("the voice engine stopped while loading ({status}). Last lines of {}:\n{tail}", log_path.display());
         }
@@ -422,10 +443,12 @@ pub async fn stop_when_idle(wait: Duration) -> Result<bool> {
     let deadline = Instant::now() + wait;
     while busy_count() > 0 {
         if Instant::now() > deadline {
+            crate::diag::note(format!("engine: left running, {} request(s) still in flight", busy_count()));
             return Ok(false);
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
+    crate::diag::note(format!("engine: stopping pid {}", lock.pid));
     #[cfg(windows)]
     {
         // The server has no shutdown route and no window to close, so this ends the process.
