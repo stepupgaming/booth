@@ -53,6 +53,19 @@ const TEXTURES = ["deep", "bright", "husky", "raspy", "soft", "authority"];
 const PITCH_MAX = 0.7;
 
 const newId = () => Math.random().toString(36).slice(2, 10);
+// The engine's languages (Zyphra's languages.json). English first; the rest by name.
+const OTHER_LANGUAGES = [
+  ["ar", "Arabic"], ["bn", "Bengali"], ["bg", "Bulgarian"], ["cs", "Czech"], ["da", "Danish"],
+  ["nl", "Dutch"], ["fi", "Finnish"], ["fr_fr", "French"], ["ka", "Georgian"], ["de", "German"],
+  ["el", "Greek"], ["gu", "Gujarati"], ["he", "Hebrew"], ["hi", "Hindi"], ["hu", "Hungarian"],
+  ["id", "Indonesian"], ["it", "Italian"], ["ja", "Japanese"], ["kn", "Kannada"], ["ko", "Korean"],
+  ["ms", "Malay"], ["ml", "Malayalam"], ["cmn", "Mandarin"], ["mr", "Marathi"], ["no", "Norwegian"],
+  ["or", "Odia"], ["pl", "Polish"], ["pt_br", "Portuguese"], ["pa", "Punjabi"], ["ro", "Romanian"],
+  ["ru", "Russian"], ["sk", "Slovak"], ["es", "Spanish"], ["sv", "Swedish"], ["tl", "Tagalog"],
+  ["ta", "Tamil"], ["te", "Telugu"], ["th", "Thai"], ["tr", "Turkish"], ["uk", "Ukrainian"],
+  ["ur", "Urdu"], ["vi", "Vietnamese"],
+].map(([value, label]) => ({ value: value as string, label: label as string }));
+
 const seed = () => 1 + Math.floor(Math.random() * 2_147_483_000);
 const firstLines: Line[] = [
   { id: "a", text: "I honestly didn't think we'd make it this far.", takes: [], kept: null },
@@ -233,6 +246,20 @@ export function Studio() {
     }
     try {
       await api.saveSettings({ ...s, decoder: d });
+      await refresh();
+    } catch (e) {
+      toast.bad(errText(e));
+    }
+  };
+
+  const language = overview?.settings.language ?? "en_us";
+  const setLanguage = async (l: string) => {
+    const s = overview?.settings;
+    if (!s) {
+      return;
+    }
+    try {
+      await api.saveSettings({ ...s, language: l === "en_us" ? null : l });
       await refresh();
     } catch (e) {
       toast.bad(errText(e));
@@ -655,6 +682,24 @@ export function Studio() {
           ) : null}
         </div>
 
+        <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
+          Language
+          <Dropdown
+            groups={[
+              {
+                label: "English",
+                options: [
+                  { value: "en_us", label: "English (US)" },
+                  { value: "en_gb", label: "English (UK)" },
+                ],
+              },
+              { label: "Other languages", options: OTHER_LANGUAGES },
+            ]}
+            label="Language"
+            onChange={setLanguage}
+            value={language}
+          />
+        </label>
         <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
           Quality
           <Dropdown

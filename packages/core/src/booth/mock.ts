@@ -148,6 +148,7 @@ let settings: Settings = {
   keep_engine_running: false,
   laci: false,
   device: "auto",
+  language: null,
 };
 
 const packs: PackInfo[] = [

@@ -24,6 +24,8 @@ export interface Settings {
   laci: boolean;
   /** "auto" uses the graphics card when Booth can; "cpu" always the processor. */
   device: Device;
+  /** Language of the text (e.g. "es", "fr_fr"); null = US English. */
+  language: string | null;
 }
 
 export interface Overview {

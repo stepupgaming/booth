@@ -19,6 +19,8 @@ pub struct Settings {
     pub laci: bool,
     /// Where the voice model runs: the graphics card when there is one Booth can use, or the processor.
     pub device: Device,
+    /// Language of the text (a server code like `es` or `fr_fr`); None = US English.
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,7 @@ impl Default for Settings {
             keep_engine_running: false,
             laci: false,
             device: Device::Auto,
+            language: None,
         }
     }
 }

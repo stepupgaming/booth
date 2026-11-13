@@ -56,7 +56,7 @@ struct SpeakArgs {
     /// Seed for a repeatable take.
     #[serde(default)]
     seed: Option<u64>,
-    /// Language of the text. Default en_us. Others: en_gb fr_fr de es it pt_br ja cmn ko ar bn bg cs
+    /// Language of the text. Default: the language chosen in Booth (US English unless changed). Codes: en_us en_gb fr_fr de es it pt_br ja cmn ko ar bn bg cs
     /// da nl fi ka el gu he hi hu id kn ms ml mr no or pl pa ro ru sk sv tl ta te th tr uk ur vi.
     #[serde(default)]
     language: Option<String>,

@@ -20,6 +20,7 @@ pub struct SpeakOptions {
     /// or raw directions (`identity.age`).
     pub controls: BTreeMap<String, f64>,
     pub seed: Option<u64>,
+    /// None = the language chosen in the app (US English unless changed).
     pub language: Option<String>,
     /// `app` or `mcp`, recorded on the take.
     pub via: String,
@@ -65,7 +66,7 @@ pub async fn speak(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<Take> {
     }
     let mut req = GenerateRequest {
         text: text.to_string(),
-        language: opts.language.clone(),
+        language: opts.language.clone().or_else(|| s.language.clone()),
         controls,
         seed: opts.seed,
         decoder: s.decoder.clone(),
@@ -108,6 +109,7 @@ pub async fn render_script(z: &Zonos, lines: &[ScriptLine], gap_ms: u32, via: &s
         let voice = pick_voice(z, Some(&line.voice)).await?;
         let mut req = GenerateRequest {
             text: line.text.clone(),
+            language: s.language.clone(),
             decoder: s.decoder.clone(),
             laci: s.laci.then_some(true),
             ..Default::default()
