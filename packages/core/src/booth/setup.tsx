@@ -144,12 +144,12 @@ export function Setup({ onDone }: { onDone: () => void }) {
         style={{
           display: "flex",
           justifyContent: "center",
-          padding: "64px 16px",
+          padding: "clamp(28px, 6vh, 64px) 16px",
           minHeight: "100%",
         }}
       >
-        <div style={{ width: "100%", maxWidth: 780, display: "flex", flexDirection: "column", alignItems: "center", gap: 28 }}>
-          <div style={{ position: "relative", width: 232, height: 232 }}>
+        <div style={{ width: "100%", maxWidth: 780, display: "flex", flexDirection: "column", alignItems: "center", gap: "clamp(18px, 3vh, 28px)" }}>
+          <div style={{ position: "relative", width: "min(232px, 22vh)", height: "min(232px, 22vh)", flexShrink: 0 }}>
             <span
               style={{
                 position: "absolute",
@@ -167,6 +167,8 @@ export function Setup({ onDone }: { onDone: () => void }) {
               style={{
                 position: "relative",
                 display: "block",
+                width: "100%",
+                height: "100%",
                 borderRadius: 28,
                 objectFit: "cover",
                 border: "1px solid rgba(255,255,255,0.08)",
@@ -212,7 +214,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
                     title={
                       disk == null
                         ? "Disk space: couldn’t check"
-                        : `Disk space on ${system.disk ?? "the models drive"} · ${Math.round(disk)} GB free`
+                        : `${Math.round(disk)} GB free on ${system.disk ? `drive ${system.disk}` : "the models drive"}`
                     }
                   />
                   <CheckRow

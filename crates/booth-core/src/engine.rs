@@ -77,12 +77,55 @@ pub async fn state() -> EngineState {
     EngineState::Stopped
 }
 
+/// Serialises starts inside one process (the app asks for the engine from several commands at once).
+static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Attach to the running engine or start one. `who` names the starter in the lock file.
+///
+/// Only one engine may ever start: two would both load onto the GPU, and the second overwrites
+/// `engine.json`, so the first is never stopped. A mutex covers this process, and the
+/// `engine.starting` marker (created exclusively) covers the app and booth-mcp racing each other.
 pub async fn ensure(who: &str) -> Result<Zonos> {
     if let Some((_, z)) = running().await {
         return Ok(z);
     }
-    start(who).await
+    let _guard = STARTING.lock().await;
+    if let Some((_, z)) = running().await {
+        return Ok(z);
+    }
+    let marker = paths::home().join("engine.starting");
+    paths::ensure_dir(&paths::home())?;
+    let deadline = Instant::now() + Duration::from_secs(200);
+    loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
+            Ok(_) => break,
+            Err(_) => {
+                // Left over from a crash: a start never takes this long.
+                let stale = std::fs::metadata(&marker)
+                    .and_then(|m| m.modified())
+                    .map(|t| t.elapsed().unwrap_or_default() > Duration::from_secs(200))
+                    .unwrap_or(true);
+                if stale {
+                    std::fs::remove_file(&marker).ok();
+                    continue;
+                }
+                if let Some((_, z)) = running().await {
+                    return Ok(z);
+                }
+                if Instant::now() > deadline {
+                    bail!("another Booth process is still starting the voice engine; try again in a moment");
+                }
+                tokio::time::sleep(Duration::from_millis(400)).await;
+            }
+        }
+    }
+    // Someone may have finished starting it between our check and taking the marker.
+    let result = match running().await {
+        Some((_, z)) => Ok(z),
+        None => start(who).await,
+    };
+    std::fs::remove_file(&marker).ok();
+    result
 }
 
 fn free_port() -> u16 {
@@ -296,7 +339,7 @@ pub async fn restart(who: &str) -> Result<Zonos> {
     if !stop().await? {
         bail!("the voice engine is still busy with a take; try again when it finishes");
     }
-    start(who).await
+    ensure(who).await
 }
 
 fn log_tail(p: &Path, n: usize) -> String {

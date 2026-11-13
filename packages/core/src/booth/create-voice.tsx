@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, canExact, canShape, errText, fileUrl, type Take, type Voice } from "@workspace/core/booth/api";
 import { packPresent, round2, useBooth } from "@workspace/core/booth/store";
-import { DoseSlider, Icon, Orb, PlayButton, usePlayer, useToast, Wave } from "@workspace/core/booth/ui";
+import { DoseSlider, Dropdown, Icon, Orb, PlayButton, usePlayer, useToast, Wave } from "@workspace/core/booth/ui";
 
 // ---------- audio helpers ----------
 
@@ -668,14 +668,15 @@ export function CreateVoice() {
             {baseVoice ? <Orb id={baseVoice.id} size={44} /> : null}
             <label className="lbl" style={{ flex: "1 1 240px" }}>
               Start from
-              <select className="field" onChange={(e) => setBase(e.target.value)} value={baseId}>
-                {shapeBases.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                    {v.kind === "default" ? "" : " (yours)"}
-                  </option>
-                ))}
-              </select>
+              <Dropdown
+                onChange={setBase}
+                options={shapeBases.map((v) => ({
+                  value: v.id,
+                  label: v.name,
+                  hint: v.kind === "default" ? undefined : "yours",
+                }))}
+                value={baseId}
+              />
             </label>
           </div>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
@@ -714,25 +715,21 @@ export function CreateVoice() {
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label className="lbl" style={{ flex: "1 1 220px" }}>
               Accent
-              <select
-                className="field"
-                onChange={(e) => {
+              <Dropdown
+                onChange={(v) => {
                   const next = Object.fromEntries(Object.entries(ctrl).filter(([k]) => !k.startsWith("accent:")));
-                  if (e.target.value) {
-                    const a = catalog?.accents.find((x) => x.id === e.target.value);
-                    next[`accent:${e.target.value}`] = round2((a?.safe?.[1] ?? 1.5) * 0.7);
+                  if (v) {
+                    const a = catalog?.accents.find((x) => x.id === v);
+                    next[`accent:${v}`] = round2((a?.safe?.[1] ?? 1.5) * 0.7);
                   }
                   setCtrl(next);
                 }}
+                options={[
+                  { value: "", label: "Keep the voice’s own" },
+                  ...(catalog?.accents ?? []).map((a) => ({ value: a.id, label: a.label })),
+                ]}
                 value={accent}
-              >
-                <option value="">Keep the voice’s own</option>
-                {catalog?.accents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.label}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
             {accent ? (
               <div style={{ flex: "1 1 220px" }}>

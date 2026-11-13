@@ -1,7 +1,10 @@
 "use client";
 
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { Select as SelectPrimitive } from "radix-ui";
 import {
   createContext,
+  type CSSProperties,
   type ReactNode,
   useCallback,
   useContext,
@@ -21,7 +24,6 @@ export function Backdrop() {
       <div aria-hidden="true" className="b-orbs">
         <span className="o1" />
         <span className="o2" />
-        <span className="ring" />
       </div>
       <div aria-hidden="true" className="b-grain" />
     </>
@@ -505,6 +507,79 @@ export function Switch({
     >
       <span />
     </button>
+  );
+}
+
+// ---------- dropdown ----------
+
+export interface DropdownOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+  /** Small faint text after the label, e.g. why it is disabled. */
+  hint?: string;
+}
+export interface DropdownGroup {
+  label: string;
+  options: DropdownOption[];
+}
+
+// Radix reserves "" for "no value", so the empty choice travels under this key.
+const EMPTY = "__empty__";
+const toKey = (v: string) => (v === "" ? EMPTY : v);
+const fromKey = (k: string) => (k === EMPTY ? "" : k);
+
+/** Booth's dropdown. Native <select> menus ignore the dark theme in WebView2, so this replaces them. */
+export function Dropdown({
+  value,
+  onChange,
+  options,
+  groups,
+  disabled,
+  label,
+  style,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options?: DropdownOption[];
+  groups?: DropdownGroup[];
+  disabled?: boolean;
+  /** Accessible name when no visible label wraps it. */
+  label?: string;
+  style?: CSSProperties;
+}) {
+  const item = (o: DropdownOption) => (
+    <SelectPrimitive.Item className="dd-item" disabled={o.disabled} key={o.value} value={toKey(o.value)}>
+      <SelectPrimitive.ItemText>{o.label}</SelectPrimitive.ItemText>
+      {o.hint ? <span className="dd-hint">{o.hint}</span> : null}
+      <SelectPrimitive.ItemIndicator className="dd-check">
+        <CheckIcon size={14} strokeWidth={2.2} />
+      </SelectPrimitive.ItemIndicator>
+    </SelectPrimitive.Item>
+  );
+  return (
+    <SelectPrimitive.Root disabled={disabled} onValueChange={(k) => onChange(fromKey(k))} value={toKey(value)}>
+      <SelectPrimitive.Trigger aria-label={label} className="field dd-trigger" style={style}>
+        <SelectPrimitive.Value />
+        <SelectPrimitive.Icon className="dd-chev">
+          <ChevronDownIcon size={15} />
+        </SelectPrimitive.Icon>
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Content className="dd-menu" collisionPadding={12} position="popper" sideOffset={6}>
+          <SelectPrimitive.Viewport className="dd-viewport">
+            {options?.map(item)}
+            {groups?.map((g, i) => (
+              <SelectPrimitive.Group key={g.label}>
+                {i > 0 || options?.length ? <SelectPrimitive.Separator className="dd-sep" /> : null}
+                <SelectPrimitive.Label className="dd-group">{g.label}</SelectPrimitive.Label>
+                {g.options.map(item)}
+              </SelectPrimitive.Group>
+            ))}
+          </SelectPrimitive.Viewport>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
   );
 }
 

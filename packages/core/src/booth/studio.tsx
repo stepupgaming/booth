@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { api, canExact, canShape, errText, fileUrl, type Mode, type Take, voiceDesc } from "@workspace/core/booth/api";
 import { controlById, currentVoice, packPresent, round2, toDose, useBooth } from "@workspace/core/booth/store";
-import { DoseSlider, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
+import { DoseSlider, Dropdown, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
 
 interface Line {
   id: string;
@@ -620,32 +620,26 @@ export function Studio() {
           />
           <label className="lbl" style={{ color: exact ? "var(--b-fainter)" : "var(--b-text)" }}>
             Accent
-            <select
-              className="field"
+            <Dropdown
               disabled={exact}
-              onChange={(e) => up({ accent: e.target.value || null })}
+              groups={[
+                {
+                  label: "English",
+                  options: (catalog?.accents ?? [])
+                    .filter((a) => a.tab !== "world")
+                    .map((a) => ({ value: a.id, label: a.label })),
+                },
+                {
+                  label: "Other languages",
+                  options: (catalog?.accents ?? [])
+                    .filter((a) => a.tab === "world")
+                    .map((a) => ({ value: a.id, label: a.label })),
+                },
+              ]}
+              onChange={(v) => up({ accent: v || null })}
+              options={[{ value: "", label: "Keep the voice’s own" }]}
               value={sound.accent ?? ""}
-            >
-              <option value="">Keep the voice’s own</option>
-              <optgroup label="English">
-                {catalog?.accents
-                  .filter((a) => a.tab !== "world")
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.label}
-                    </option>
-                  ))}
-              </optgroup>
-              <optgroup label="Other languages">
-                {catalog?.accents
-                  .filter((a) => a.tab === "world")
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.label}
-                    </option>
-                  ))}
-              </optgroup>
-            </select>
+            />
           </label>
           {sound.accent ? (
             <DoseSlider
@@ -663,12 +657,19 @@ export function Studio() {
 
         <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
           Quality
-          <select className="field" onChange={(e) => setDecoder(e.target.value)} value={fullOk ? decoder : "keep2_plain"}>
-            <option disabled={!fullOk} value="full_mr">
-              Best (studio decoder){fullOk ? "" : " · download in Settings"}
-            </option>
-            <option value="keep2_plain">Fast (pruned decoder)</option>
-          </select>
+          <Dropdown
+            onChange={setDecoder}
+            options={[
+              {
+                value: "full_mr",
+                label: "Best (studio decoder)",
+                disabled: !fullOk,
+                hint: fullOk ? undefined : "download in Settings",
+              },
+              { value: "keep2_plain", label: "Fast (pruned decoder)" },
+            ]}
+            value={fullOk ? decoder : "keep2_plain"}
+          />
         </label>
         <button
           className="link small faint"
