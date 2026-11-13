@@ -24,7 +24,7 @@ computer, on the graphics card or the processor, so nothing you write leaves it.
 
 - **Windows** 10 or 11, 64-bit. Runs on any modern processor. With an NVIDIA card (RTX 20 series
   or newer, recent driver) Booth offers a graphics-card engine that is several times faster.
-- **Mac** with Apple Silicon (M1 or newer), macOS 13 or later. Runs on the Mac's graphics (Metal).
+- **Mac** with Apple Silicon (M1 or newer), macOS 13.3 or later. Runs on the Mac's graphics (Metal).
   New and not yet tested on real hardware.
 - **Linux** x86-64 (AppImage or .deb). Processor only. New and not yet tested on real hardware.
 - About 1.2 GB of disk for the voice model, up to 9 GB with every add-on.

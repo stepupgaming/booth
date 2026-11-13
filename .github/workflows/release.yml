@@ -238,7 +238,7 @@ jobs:
           cmake -S zonos3/servers/ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DBUILD_SHARED_LIBS=OFF -DGGML_CCACHE=OFF \
             -DGGML_NATIVE=OFF -DCMAKE_C_FLAGS=-mcpu=apple-m1 -DCMAKE_CXX_FLAGS=-mcpu=apple-m1 -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=@executable_path'
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=@executable_path'
           cmake --build build -j 4 --target zonos3-server
           mkdir -p engine-dist
           cp build/zonos3-server engine-dist/ 2>/dev/null || cp "$(find build -type f -name zonos3-server | head -1)" engine-dist/

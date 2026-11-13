@@ -44,7 +44,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "13.0",
+      "minimumSystemVersion": "13.3",
       "signingIdentity": "-"
     },
     "shortDescription": "Local text to speech and voice cloning",
