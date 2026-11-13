@@ -275,6 +275,9 @@ pub async fn download(
     let files = plan(client, pack).await?;
     let total: u64 = files.iter().map(|f| f.size).sum();
     let mut done: u64 = 0;
+    // A source that fails is tried last for the rest of this download, so an outage costs one
+    // timeout, not one per file.
+    let mut failed = Vec::new();
     for f in &files {
         let dest = models.join(f.rel.replace('/', std::path::MAIN_SEPARATOR_STR));
         let have = dest.metadata().map(|m| m.len()).unwrap_or(0);
@@ -283,7 +286,7 @@ pub async fn download(
             on_progress(Progress { pack, file: f.rel.clone(), done_bytes: done, total_bytes: total });
             continue;
         }
-        fetch_one(client, f, &dest, |n| {
+        fetch_one(client, f, &dest, &mut failed, |n| {
             on_progress(Progress { pack, file: f.rel.clone(), done_bytes: done + n, total_bytes: total })
         })
         .await
@@ -297,6 +300,7 @@ async fn fetch_one(
     client: &reqwest::Client,
     f: &RemoteFile,
     dest: &Path,
+    failed: &mut Vec<String>,
     mut on_bytes: impl FnMut(u64),
 ) -> Result<()> {
     if let Some(parent) = dest.parent() {
@@ -313,12 +317,18 @@ async fn fetch_one(
     if f.sources.is_empty() {
         bail!("no download source is enabled");
     }
-    // Each source gets two tries; a break on one resumes from the bytes already on disk.
+    // Sources that worked so far first. Each gets two tries; a break on one resumes from the bytes
+    // already on disk.
+    let mut order: Vec<&Source> = f.sources.iter().collect();
+    order.sort_by_key(|s| failed.contains(&s.name));
     let mut errors = Vec::new();
-    for src in f.sources.iter().chain(f.sources.iter()) {
+    for src in order.iter().chain(order.iter()) {
         if size_of(&part) < f.size {
             if let Err(e) = fetch_from(client, src, &part, f.size, &mut on_bytes).await {
                 errors.push(format!("{}: {e:#}", src.name));
+                if !failed.contains(&src.name) {
+                    failed.push(src.name.clone());
+                }
                 continue;
             }
         }
@@ -406,7 +416,7 @@ async fn download_cuda_engine(client: &reqwest::Client, mut on_progress: impl Fn
     let zip = engines.join(&f.rel);
     let have = zip.metadata().map(|m| m.len()).unwrap_or(0);
     if have != f.size {
-        fetch_one(client, &f, &zip, |n| {
+        fetch_one(client, &f, &zip, &mut Vec::new(), |n| {
             on_progress(Progress { pack, file: f.rel.clone(), done_bytes: n, total_bytes: f.size })
         })
         .await
