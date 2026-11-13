@@ -1,0 +1,95 @@
+# Copies the ZONOS3-Mini files pinned in crates/booth-core/models.lock.json from Hugging Face to a
+# GitHub release (models-<rev>), so Booth can still download its voice model if Hugging Face is down
+# or the files there change. Every file is checked against the lock's SHA-256 before upload; files
+# over GitHub's 2 GiB limit go up in parts. Re-running only uploads what is missing.
+name: Mirror the model files
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [crates/booth-core/models.lock.json]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: models-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LOCK: crates/booth-core/models.lock.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make sure the release exists
+        run: |
+          repo=$(jq -r .repo "$LOCK"); rev=$(jq -r .revision "$LOCK")
+          tag=$(jq -r .mirror "$LOCK" | sed 's#.*/##')
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          cat > NOTICE.md <<EOF
+          Mirror of the ZONOS3-Mini model files that Booth downloads, copied unchanged from
+          [${repo}@${rev:0:10}](https://huggingface.co/${repo}/tree/${rev}/gguf) by Zyphra.
+
+          The weights are licensed under the Apache License 2.0 (see LICENSE-ZONOS3-weights.txt).
+          Copyright Zyphra Technologies. Booth uses them as a fallback when Hugging Face can't be
+          reached; get them from Hugging Face if you want them for anything else.
+
+          Files larger than 2 GB are split into .part1, .part2, ...; join them in order to get the
+          original file. Each file's SHA-256 is in Booth's models.lock.json.
+          EOF
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --prerelease --title "Model mirror: ZONOS3-Mini ${rev:0:10}" \
+              --notes-file NOTICE.md
+          fi
+          curl -fsSL --retry 5 https://www.apache.org/licenses/LICENSE-2.0.txt -o LICENSE-ZONOS3-weights.txt
+          gh release upload "$tag" NOTICE.md LICENSE-ZONOS3-weights.txt --clobber
+
+      - name: Upload missing files
+        run: |
+          set -u
+          repo=$(jq -r .repo "$LOCK"); rev=$(jq -r .revision "$LOCK")
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"' > have.txt
+          mkdir -p work
+          jq -c '.packs[][]' "$LOCK" | while read -r f; do
+            rel=$(jq -r .rel <<<"$f"); size=$(jq -r .size <<<"$f"); sha=$(jq -r .sha256 <<<"$f")
+            missing=0
+            while read -r name psize; do
+              grep -qxF "$name $psize" have.txt || missing=1
+            done < <(jq -r '.mirror[] | "\(.name) \(.size)"' <<<"$f")
+            [ "$missing" = 1 ] || { echo "have  $rel"; continue; }
+
+            echo "fetch $rel ($size bytes)"
+            url="https://huggingface.co/$repo/resolve/$rev/gguf/$(jq -rn --arg r "$rel" '$r | split("/") | map(@uri) | join("/")')"
+            curl -fsSL --retry 5 --retry-all-errors -o work/file "$url" </dev/null
+            echo "$sha  work/file" | sha256sum -c --quiet
+            [ "$(stat -c %s work/file)" = "$size" ]
+
+            parts=$(jq '.mirror | length' <<<"$f")
+            if [ "$parts" = 1 ]; then
+              mv work/file "work/$(jq -r '.mirror[0].name' <<<"$f")"
+            else
+              base=$(jq -r '.mirror[0].name | sub("\\.part1$"; "")' <<<"$f")
+              split -b 2000000000 -a 1 --numeric-suffixes=1 work/file "work/$base.part"
+              rm work/file
+            fi
+            while read -r name psize; do
+              [ "$(stat -c %s "work/$name")" = "$psize" ]
+              grep -q "^$name " have.txt && gh release delete-asset "$TAG" "$name" --yes </dev/null
+              gh release upload "$TAG" "work/$name" </dev/null
+              rm "work/$name"
+            done < <(jq -r '.mirror[] | "\(.name) \(.size)"' <<<"$f")
+          done
+
+      - name: Check every file is there
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"' > have.txt
+          want=$(jq -r '.packs[][].mirror[] | "\(.name) \(.size)"' "$LOCK")
+          missing=$(grep -vxFf have.txt <<<"$want" || true)
+          if [ -n "$missing" ]; then echo "Still missing:"; echo "$missing"; exit 1; fi
+          echo "All $(wc -l <<<"$want") files are on $TAG."

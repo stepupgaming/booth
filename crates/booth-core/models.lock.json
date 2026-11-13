@@ -1,0 +1,1004 @@
+{
+  "repo": "Zyphra/ZONOS3-Mini",
+  "revision": "f68e6e470fd14d6d1bc50e8461ee4d4f64d6c513",
+  "mirror": "https://github.com/stepupgaming/booth/releases/download/models-f68e6e470f",
+  "packs": {
+    "core": [
+      {
+        "rel": "backbone-ptq.gguf",
+        "size": 663150624,
+        "sha256": "66fceb6d73a8c30bde80249e4112bb308380ab7f3384fa11c8e4048115e4ceec",
+        "mirror": [
+          {
+            "name": "backbone-ptq.gguf",
+            "size": 663150624
+          }
+        ]
+      },
+      {
+        "rel": "zac-keep2.gguf",
+        "size": 452325440,
+        "sha256": "834e5b70b88294afc3c702a478487e0664dcc6b574c16fc6167d72444aabeafd",
+        "mirror": [
+          {
+            "name": "zac-keep2.gguf",
+            "size": 452325440
+          }
+        ]
+      },
+      {
+        "rel": "spk-encoder.gguf",
+        "size": 45385728,
+        "sha256": "9539f340b70be246005403b9c254732e180e85e0b3c57fb1973f0d6bc6c59bdc",
+        "mirror": [
+          {
+            "name": "spk-encoder.gguf",
+            "size": 45385728
+          }
+        ]
+      },
+      {
+        "rel": "steer.gguf",
+        "size": 204960,
+        "sha256": "6e8e3f86e89a09801ce083b9286f43263ec696acfaff72e25aca537aa9efa90c",
+        "mirror": [
+          {
+            "name": "steer.gguf",
+            "size": 204960
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Cillian_en-Irish_M_1.codes.npy",
+        "size": 5928,
+        "sha256": "dadae1124c63cda7a0627fd282d54aa255a8800155eae1b9da54b08b345c2f10",
+        "mirror": [
+          {
+            "name": "voices--English--Cillian_en-Irish_M_1.codes.npy",
+            "size": 5928
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Cillian_en-Irish_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "f3125fae2f679fb5c8128d308ddd02986fd7d914975d17cc6dadf9eb130b1061",
+        "mirror": [
+          {
+            "name": "voices--English--Cillian_en-Irish_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Cillian_en-Irish_M_1.wav",
+        "size": 852644,
+        "sha256": "d43eda64c4928dfb30ecf547e4a00100b8f83ed0eb5c1e07116725794da72ea2",
+        "mirror": [
+          {
+            "name": "voices--English--Cillian_en-Irish_M_1.wav",
+            "size": 852644
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Imogen_en-British_F_1.codes.npy",
+        "size": 7728,
+        "sha256": "c906f6c405c9078607fe9c54cf1b71ef0e112839490499e34bf8791ed1ad7e86",
+        "mirror": [
+          {
+            "name": "voices--English--Imogen_en-British_F_1.codes.npy",
+            "size": 7728
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Imogen_en-British_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "683424b91faeade48c8a92e05e1c3679366abbba443ef62eccba8dc40de48e9e",
+        "mirror": [
+          {
+            "name": "voices--English--Imogen_en-British_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Imogen_en-British_F_1.wav",
+        "size": 1117244,
+        "sha256": "dde4691a6ccd95f4928fbbc4e2d49089824b264575bc0bf0ac4986dd2f8082c5",
+        "mirror": [
+          {
+            "name": "voices--English--Imogen_en-British_F_1.wav",
+            "size": 1117244
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Jett_en-energetic_M_1.codes.npy",
+        "size": 6608,
+        "sha256": "8f32e946509673ae422c37cc9b79957cb569f212360745f9110d343f6f1f9f2c",
+        "mirror": [
+          {
+            "name": "voices--English--Jett_en-energetic_M_1.codes.npy",
+            "size": 6608
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Jett_en-energetic_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "624b749d220dac7fdcda479b1964cb8f7de58c838c1357f2f0161dac06e34f48",
+        "mirror": [
+          {
+            "name": "voices--English--Jett_en-energetic_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Jett_en-energetic_M_1.wav",
+        "size": 952604,
+        "sha256": "107c8350f191d47401da6844158528d0f493cbf46be4dee6bb81dd71bc052619",
+        "mirror": [
+          {
+            "name": "voices--English--Jett_en-energetic_M_1.wav",
+            "size": 952604
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Morgana_en-witch_F_1.codes.npy",
+        "size": 12448,
+        "sha256": "2f60227a9f7cdc6ce696548f4c28c199d3f5afeadf7317a1bde132575a1ed731",
+        "mirror": [
+          {
+            "name": "voices--English--Morgana_en-witch_F_1.codes.npy",
+            "size": 12448
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Morgana_en-witch_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "a817387697c43138639aa1e52a9e42d9f3a629655e0faea5ac8565eb8e57c091",
+        "mirror": [
+          {
+            "name": "voices--English--Morgana_en-witch_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Morgana_en-witch_F_1.mp3",
+        "size": 329812,
+        "sha256": "8fec617ca7a4044f930c108ded0daf814ca93e61d97a7df626373aa182240ece",
+        "mirror": [
+          {
+            "name": "voices--English--Morgana_en-witch_F_1.mp3",
+            "size": 329812
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Rupert_en-British_M_1.codes.npy",
+        "size": 8048,
+        "sha256": "abf42171c7402fea5888ec350a50b64fd78777e44d7caf665c04e4e2b629fc79",
+        "mirror": [
+          {
+            "name": "voices--English--Rupert_en-British_M_1.codes.npy",
+            "size": 8048
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Rupert_en-British_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "0c68e699376dbafdc1ab0fadc133f48e7df9cb33b3a7b80b05f42c5c0aad8fa7",
+        "mirror": [
+          {
+            "name": "voices--English--Rupert_en-British_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Rupert_en-British_M_1.wav",
+        "size": 1164284,
+        "sha256": "3743b94cfc35c004fb5c2bcc9c2a537b605e3e15d4677e2b5b811bc18d95151e",
+        "mirror": [
+          {
+            "name": "voices--English--Rupert_en-British_M_1.wav",
+            "size": 1164284
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Sakura_en-anime_F_1.codes.npy",
+        "size": 9168,
+        "sha256": "4b8c8288b45e1a3ff5aa3adc05a4af386f5889e9ab47902ff36f9daa8900ded2",
+        "mirror": [
+          {
+            "name": "voices--English--Sakura_en-anime_F_1.codes.npy",
+            "size": 9168
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Sakura_en-anime_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "daf3e82d2e6f2ce2fe90c73473a312a721295ae7f85763f99c87ee2f861063a9",
+        "mirror": [
+          {
+            "name": "voices--English--Sakura_en-anime_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Sakura_en-anime_F_1.wav",
+        "size": 1328924,
+        "sha256": "01e8f47241546efd1223bd1cac09ea81f1d9ae2cf3148260f37413f05db40229",
+        "mirror": [
+          {
+            "name": "voices--English--Sakura_en-anime_F_1.wav",
+            "size": 1328924
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Savannah_en-American_F_1.codes.npy",
+        "size": 6968,
+        "sha256": "f6e450fea8fa521c6be32b64fc61f48d6f9fd8301fe5759abd2315ce6ac946fb",
+        "mirror": [
+          {
+            "name": "voices--English--Savannah_en-American_F_1.codes.npy",
+            "size": 6968
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Savannah_en-American_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "dd81587e66f96fb62da47ef13d5d867de464ca386a83f01b4403cdd19629ca6c",
+        "mirror": [
+          {
+            "name": "voices--English--Savannah_en-American_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Savannah_en-American_F_1.mp3",
+        "size": 183527,
+        "sha256": "f8d5eaf8f6c18a0a3b452652da62d821f819d4e95f6347aa29986a503e219d14",
+        "mirror": [
+          {
+            "name": "voices--English--Savannah_en-American_F_1.mp3",
+            "size": 183527
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Thaddeus_en-announcervoice_M_1.codes.npy",
+        "size": 9368,
+        "sha256": "5c76de5bf16fd10282fced313c6c00a03fa2150b1df4c2382e19c6cbad65f179",
+        "mirror": [
+          {
+            "name": "voices--English--Thaddeus_en-announcervoice_M_1.codes.npy",
+            "size": 9368
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Thaddeus_en-announcervoice_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "fc8e21356730988aa20da70123991404345e0bdbfe3afe31e6371d8d93095461",
+        "mirror": [
+          {
+            "name": "voices--English--Thaddeus_en-announcervoice_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Thaddeus_en-announcervoice_M_1.mp3",
+        "size": 247474,
+        "sha256": "c7fc96a18645b129b1e55659379ba796f5cfd70a800068b977d37f1254e93c52",
+        "mirror": [
+          {
+            "name": "voices--English--Thaddeus_en-announcervoice_M_1.mp3",
+            "size": 247474
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Willow_en-asrm_F_1.codes.npy",
+        "size": 15048,
+        "sha256": "29ca4c14c16bb09b2bc48bb93f2d5a56327558d64271e54ebd1f713a4204905b",
+        "mirror": [
+          {
+            "name": "voices--English--Willow_en-asrm_F_1.codes.npy",
+            "size": 15048
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Willow_en-asrm_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "6ebb84309f21f1dcbe6371e2355dc98f8ee3d0aee5850c305d06a73fe0a7c222",
+        "mirror": [
+          {
+            "name": "voices--English--Willow_en-asrm_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Willow_en-asrm_F_1.wav",
+        "size": 2193284,
+        "sha256": "6a7574e4b91794390867027eb5c2c2a12f6cef557fc7d804b45f985144a50e5e",
+        "mirror": [
+          {
+            "name": "voices--English--Willow_en-asrm_F_1.wav",
+            "size": 2193284
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Wyatt_en-American_M_1.codes.npy",
+        "size": 10248,
+        "sha256": "7a854f9b66eefa9203a9f752c2a1ec808345b4d72ac34f8547ee776c58e4b72f",
+        "mirror": [
+          {
+            "name": "voices--English--Wyatt_en-American_M_1.codes.npy",
+            "size": 10248
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Wyatt_en-American_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "b39d377b653ebaca6bbd4ecd13c382fe16d81f0cfae27217d9b626e5589a0511",
+        "mirror": [
+          {
+            "name": "voices--English--Wyatt_en-American_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/English/Wyatt_en-American_M_1.ogg",
+        "size": 147400,
+        "sha256": "92c17f6eff4c9612ece96f0efae6f74f8e6b381f8c851ce739cdf0854a5a5831",
+        "mirror": [
+          {
+            "name": "voices--English--Wyatt_en-American_M_1.ogg",
+            "size": 147400
+          }
+        ]
+      },
+      {
+        "rel": "voices/French/Gaspard_fr_M_1.codes.npy",
+        "size": 11488,
+        "sha256": "34293ea302d3a47c17ab2f8514fb3a3354dc4ad695581d9b2f93fb37476ee1f7",
+        "mirror": [
+          {
+            "name": "voices--French--Gaspard_fr_M_1.codes.npy",
+            "size": 11488
+          }
+        ]
+      },
+      {
+        "rel": "voices/French/Gaspard_fr_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "6e19a9a545af6a263c00b997368d8396ff8abc761b53dce2a6d4df735f0766e9",
+        "mirror": [
+          {
+            "name": "voices--French--Gaspard_fr_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/French/Gaspard_fr_M_1.mp3",
+        "size": 303899,
+        "sha256": "b353c4f7cccb9ffd335dde8428cae212373db2cf9c7018afc22cbb8f3d6c949a",
+        "mirror": [
+          {
+            "name": "voices--French--Gaspard_fr_M_1.mp3",
+            "size": 303899
+          }
+        ]
+      },
+      {
+        "rel": "voices/German/Liesel_de_F_1.codes.npy",
+        "size": 6928,
+        "sha256": "6952aa3383e1181610b3b88115ff2fa20a2a2da0686c9b19f2cf0f57f96ab92e",
+        "mirror": [
+          {
+            "name": "voices--German--Liesel_de_F_1.codes.npy",
+            "size": 6928
+          }
+        ]
+      },
+      {
+        "rel": "voices/German/Liesel_de_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "2d44e40f8c1f43fcabaabf301e14bfc48325bf4596cb04e076d662d8b2724c5d",
+        "mirror": [
+          {
+            "name": "voices--German--Liesel_de_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/German/Liesel_de_F_1.mp3",
+        "size": 182273,
+        "sha256": "1a8909ca74065967d74534f438fcd15b770fc2ec55d2cbe217836a720cfff091",
+        "mirror": [
+          {
+            "name": "voices--German--Liesel_de_F_1.mp3",
+            "size": 182273
+          }
+        ]
+      },
+      {
+        "rel": "voices/German/Wolfgang_de_M_1.codes.npy",
+        "size": 7488,
+        "sha256": "553a4dd74cc650ea333c49033f5b459e1faa7244cfa4185862cce1a223fe41e1",
+        "mirror": [
+          {
+            "name": "voices--German--Wolfgang_de_M_1.codes.npy",
+            "size": 7488
+          }
+        ]
+      },
+      {
+        "rel": "voices/German/Wolfgang_de_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "3a0e305b2789f79b843d96628b275b5d8f3f877f89c80e87fe57bf6078901467",
+        "mirror": [
+          {
+            "name": "voices--German--Wolfgang_de_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/German/Wolfgang_de_M_1.mp3",
+        "size": 196483,
+        "sha256": "5ca32af842970e58c2769f1a191438f44b36e721071e058ed51a8c2febb2f261",
+        "mirror": [
+          {
+            "name": "voices--German--Wolfgang_de_M_1.mp3",
+            "size": 196483
+          }
+        ]
+      },
+      {
+        "rel": "voices/Hindi/Ananya_hi_F_1.codes.npy",
+        "size": 7768,
+        "sha256": "85288fd646bb836b2424faad617d13f311c4ce129a48d7f9577bbfe29df9aa5b",
+        "mirror": [
+          {
+            "name": "voices--Hindi--Ananya_hi_F_1.codes.npy",
+            "size": 7768
+          }
+        ]
+      },
+      {
+        "rel": "voices/Hindi/Ananya_hi_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "f7acf756273d86131de701d51b25a7e0b3323d724b7e98a0c890fcf176f85a14",
+        "mirror": [
+          {
+            "name": "voices--Hindi--Ananya_hi_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Hindi/Ananya_hi_F_1.wav",
+        "size": 1123124,
+        "sha256": "4c0417c4f1a76d3290281c932a35b5b25b8e4cfe9acb328e24abf68b7f232840",
+        "mirror": [
+          {
+            "name": "voices--Hindi--Ananya_hi_F_1.wav",
+            "size": 1123124
+          }
+        ]
+      },
+      {
+        "rel": "voices/Hindi/Arjun_hi_M_1.codes.npy",
+        "size": 7128,
+        "sha256": "dec52799002595008cf710381b5eb5f2acf0edd82fb28636c1bbef4aba9df618",
+        "mirror": [
+          {
+            "name": "voices--Hindi--Arjun_hi_M_1.codes.npy",
+            "size": 7128
+          }
+        ]
+      },
+      {
+        "rel": "voices/Hindi/Arjun_hi_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "9cb0eb4cc81b79acadedb173e1fbbc0203bf71ea9ae66e56bd76393386f25815",
+        "mirror": [
+          {
+            "name": "voices--Hindi--Arjun_hi_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Hindi/Arjun_hi_M_1.wav",
+        "size": 1029044,
+        "sha256": "760b13421993d4d453cf9c3ce789da2425922c54a483a1e1d2daff3a226a6043",
+        "mirror": [
+          {
+            "name": "voices--Hindi--Arjun_hi_M_1.wav",
+            "size": 1029044
+          }
+        ]
+      },
+      {
+        "rel": "voices/Italian/Ginevra_it_F_1.codes.npy",
+        "size": 6808,
+        "sha256": "91e5f1a6ccc71d55840e4277a4f00c900e01e446e956949a5651c2e5657f2d4f",
+        "mirror": [
+          {
+            "name": "voices--Italian--Ginevra_it_F_1.codes.npy",
+            "size": 6808
+          }
+        ]
+      },
+      {
+        "rel": "voices/Italian/Ginevra_it_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "950ecf44f57fd053effd83c65f7f35059df0dcd1bb99dbc197b6649507171621",
+        "mirror": [
+          {
+            "name": "voices--Italian--Ginevra_it_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Italian/Ginevra_it_F_1.mp3",
+        "size": 179347,
+        "sha256": "8dc9a8ebaa97b6c9a32aab707f1384a37d275e9a001029fedbfe7897a92514d9",
+        "mirror": [
+          {
+            "name": "voices--Italian--Ginevra_it_F_1.mp3",
+            "size": 179347
+          }
+        ]
+      },
+      {
+        "rel": "voices/Italian/Lorenzo_it_M_1.codes.npy",
+        "size": 7488,
+        "sha256": "e25cc35719d796ba7ace4a0ec563d159cfe31e978f78098b126b2a8c7f3fbc02",
+        "mirror": [
+          {
+            "name": "voices--Italian--Lorenzo_it_M_1.codes.npy",
+            "size": 7488
+          }
+        ]
+      },
+      {
+        "rel": "voices/Italian/Lorenzo_it_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "a355bb33b907130985b74eae3fa05e4aa19d7fe7233f26c0416afad0726c2367",
+        "mirror": [
+          {
+            "name": "voices--Italian--Lorenzo_it_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Italian/Lorenzo_it_M_1.mp3",
+        "size": 196483,
+        "sha256": "be0f69f123a15d1c7c1100abf94c6f1c649034f16239f2926a87f20550d2ebcb",
+        "mirror": [
+          {
+            "name": "voices--Italian--Lorenzo_it_M_1.mp3",
+            "size": 196483
+          }
+        ]
+      },
+      {
+        "rel": "voices/Korean/Minjun_ko_M_1.codes.npy",
+        "size": 7288,
+        "sha256": "2b40a0d108b5188be2fb8695eb0f28b5a6f16c4dd485fba4ab82876b46e79522",
+        "mirror": [
+          {
+            "name": "voices--Korean--Minjun_ko_M_1.codes.npy",
+            "size": 7288
+          }
+        ]
+      },
+      {
+        "rel": "voices/Korean/Minjun_ko_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "ab3d9c60c3f36080fd7e9eebd20c8ece42059236dd83f19980e5e4dbca94fc4e",
+        "mirror": [
+          {
+            "name": "voices--Korean--Minjun_ko_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Korean/Minjun_ko_M_1.wav",
+        "size": 1052564,
+        "sha256": "c1c1e59241314afe001d565ab4e0c92224f598f6bbc1e4aaaac2ce5b036d16aa",
+        "mirror": [
+          {
+            "name": "voices--Korean--Minjun_ko_M_1.wav",
+            "size": 1052564
+          }
+        ]
+      },
+      {
+        "rel": "voices/Korean/Seoyeon_ko_F_1.codes.npy",
+        "size": 7048,
+        "sha256": "d6ca0cb788e610d56b02824108aa7c54e115bdab1eaeca81330b1475f6de9d15",
+        "mirror": [
+          {
+            "name": "voices--Korean--Seoyeon_ko_F_1.codes.npy",
+            "size": 7048
+          }
+        ]
+      },
+      {
+        "rel": "voices/Korean/Seoyeon_ko_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "dddb6aa68c3febe83ca656c959f4d78246c72e011cde72c3745d1a46a37d8345",
+        "mirror": [
+          {
+            "name": "voices--Korean--Seoyeon_ko_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Korean/Seoyeon_ko_F_1.wav",
+        "size": 1017284,
+        "sha256": "558801500e68ee38fabca81c12fe2f7ec763e989e94430b3573be3df2e0ebf30",
+        "mirror": [
+          {
+            "name": "voices--Korean--Seoyeon_ko_F_1.wav",
+            "size": 1017284
+          }
+        ]
+      },
+      {
+        "rel": "voices/Mandarin Chinese/Haoran_zh-energetic_M_1.codes.npy",
+        "size": 6608,
+        "sha256": "033e6e1acb03cacf2dc9278f752c43774224747e3aa91882113422ab35dbfbb6",
+        "mirror": [
+          {
+            "name": "voices--Mandarin_Chinese--Haoran_zh-energetic_M_1.codes.npy",
+            "size": 6608
+          }
+        ]
+      },
+      {
+        "rel": "voices/Mandarin Chinese/Haoran_zh-energetic_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "b056f91bcbf4ffda432459f8c6a80b37cdc98cd82fd296e29cf2584325809c6c",
+        "mirror": [
+          {
+            "name": "voices--Mandarin_Chinese--Haoran_zh-energetic_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Mandarin Chinese/Haoran_zh-energetic_M_1.mp3",
+        "size": 173914,
+        "sha256": "ddd027b458401d46f893d51e42cbd0c7d9634592a7401a43127c1a639215d6be",
+        "mirror": [
+          {
+            "name": "voices--Mandarin_Chinese--Haoran_zh-energetic_M_1.mp3",
+            "size": 173914
+          }
+        ]
+      },
+      {
+        "rel": "voices/Mandarin Chinese/Meilin_zh-energetic_F_1.codes.npy",
+        "size": 6888,
+        "sha256": "8a3b3aef695ca75788eea98d94d8580d2147c783f427e08cf4ed2d66ecf5c4c6",
+        "mirror": [
+          {
+            "name": "voices--Mandarin_Chinese--Meilin_zh-energetic_F_1.codes.npy",
+            "size": 6888
+          }
+        ]
+      },
+      {
+        "rel": "voices/Mandarin Chinese/Meilin_zh-energetic_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "8430a2852291d874f327666d05bd15ee854a009cc54b9d3cdba9005d6bc7f59b",
+        "mirror": [
+          {
+            "name": "voices--Mandarin_Chinese--Meilin_zh-energetic_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Mandarin Chinese/Meilin_zh-energetic_F_1.wav",
+        "size": 993764,
+        "sha256": "4200f7e397be1ff2a5dac9169daba8338af911e12cf47e925999016d65969612",
+        "mirror": [
+          {
+            "name": "voices--Mandarin_Chinese--Meilin_zh-energetic_F_1.wav",
+            "size": 993764
+          }
+        ]
+      },
+      {
+        "rel": "voices/Portuguese/Leonor_pt_F_1.codes.npy",
+        "size": 7448,
+        "sha256": "56f4c8d2d6f856305e250966710fa7669244ef1d86ffd82659ade969755c7f88",
+        "mirror": [
+          {
+            "name": "voices--Portuguese--Leonor_pt_F_1.codes.npy",
+            "size": 7448
+          }
+        ]
+      },
+      {
+        "rel": "voices/Portuguese/Leonor_pt_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "c4074805d713ac20444253f1b98f814b7f27c43b6ab29bb2f0feeaaae8f7e4b2",
+        "mirror": [
+          {
+            "name": "voices--Portuguese--Leonor_pt_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Portuguese/Leonor_pt_F_1.wav",
+        "size": 1076084,
+        "sha256": "4cb21b761a7c808b2552451485ca14b32529b68294ef4b478c96665cabc8fcd1",
+        "mirror": [
+          {
+            "name": "voices--Portuguese--Leonor_pt_F_1.wav",
+            "size": 1076084
+          }
+        ]
+      },
+      {
+        "rel": "voices/Portuguese/Thiago_pt_M_1.codes.npy",
+        "size": 8848,
+        "sha256": "b63efbc88127b88ad89740eed377a0f1600c4e2ae0deb030e574f8b7b9c6c667",
+        "mirror": [
+          {
+            "name": "voices--Portuguese--Thiago_pt_M_1.codes.npy",
+            "size": 8848
+          }
+        ]
+      },
+      {
+        "rel": "voices/Portuguese/Thiago_pt_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "fd1eee487091ef60636fe08cbafc15133c34a3f697629e1057e749c5b9893dc0",
+        "mirror": [
+          {
+            "name": "voices--Portuguese--Thiago_pt_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Portuguese/Thiago_pt_M_1.wav",
+        "size": 1281884,
+        "sha256": "c2c02110a5f10765a9bf9c533a6cbf25bb39fca3bf23023f58b70a3a67fe89d2",
+        "mirror": [
+          {
+            "name": "voices--Portuguese--Thiago_pt_M_1.wav",
+            "size": 1281884
+          }
+        ]
+      },
+      {
+        "rel": "voices/README.md",
+        "size": 2446,
+        "sha256": "f2b98215ff373d71d6bac9928d78ad89e74ca4bcf0d9c036e00eafaad13c7992",
+        "mirror": [
+          {
+            "name": "voices--README.md",
+            "size": 2446
+          }
+        ]
+      },
+      {
+        "rel": "voices/Spanish/Rodrigo_es_M_1.codes.npy",
+        "size": 6408,
+        "sha256": "1d6ff61ab49a2f3cfeb116afa80adcc33290cd5c7d7cb4c50181f4359c52b1c0",
+        "mirror": [
+          {
+            "name": "voices--Spanish--Rodrigo_es_M_1.codes.npy",
+            "size": 6408
+          }
+        ]
+      },
+      {
+        "rel": "voices/Spanish/Rodrigo_es_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "0305b7ab40d5d4a1df07ed7aa1c164f64ede1ac4b6250fa56383b4c3ae03e1e1",
+        "mirror": [
+          {
+            "name": "voices--Spanish--Rodrigo_es_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Spanish/Rodrigo_es_M_1.wav",
+        "size": 923204,
+        "sha256": "2559c50978b50ad660b82528558047a684b1ff6d3c91dd59691a3c0c13c4eaf5",
+        "mirror": [
+          {
+            "name": "voices--Spanish--Rodrigo_es_M_1.wav",
+            "size": 923204
+          }
+        ]
+      },
+      {
+        "rel": "voices/Spanish/Ximena_es_F_1.codes.npy",
+        "size": 7968,
+        "sha256": "b571c52d7543867bb2299e0626cea9d6f6c6c9a3bffabc85570baf08897dafb9",
+        "mirror": [
+          {
+            "name": "voices--Spanish--Ximena_es_F_1.codes.npy",
+            "size": 7968
+          }
+        ]
+      },
+      {
+        "rel": "voices/Spanish/Ximena_es_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "b9cc1284c52003705619b37f2c25c59e170d2c70650af39e5692b2fe91782bd6",
+        "mirror": [
+          {
+            "name": "voices--Spanish--Ximena_es_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Spanish/Ximena_es_F_1.wav",
+        "size": 1152524,
+        "sha256": "6b029ff5ef03907d401d92d9fe037d14ea6eb363c0d4e78512fc13c7b6eedfc0",
+        "mirror": [
+          {
+            "name": "voices--Spanish--Ximena_es_F_1.wav",
+            "size": 1152524
+          }
+        ]
+      },
+      {
+        "rel": "voices/Telugu/Chaitanya_te_M_1.codes.npy",
+        "size": 6368,
+        "sha256": "7003a4812a759171470f3187955e1b5c27f37bd449eb4bc012d7ac8620d0e9f7",
+        "mirror": [
+          {
+            "name": "voices--Telugu--Chaitanya_te_M_1.codes.npy",
+            "size": 6368
+          }
+        ]
+      },
+      {
+        "rel": "voices/Telugu/Chaitanya_te_M_1.embedding.npy",
+        "size": 896,
+        "sha256": "ca818012cf5656d12eb3bccdfad4086831a6a892f8e7bf2277ca11bf921e5eb7",
+        "mirror": [
+          {
+            "name": "voices--Telugu--Chaitanya_te_M_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Telugu/Chaitanya_te_M_1.wav",
+        "size": 917324,
+        "sha256": "327c73a145533f1cb874736e9194048a22a43a10e74c7b9b8c354306068c54b0",
+        "mirror": [
+          {
+            "name": "voices--Telugu--Chaitanya_te_M_1.wav",
+            "size": 917324
+          }
+        ]
+      },
+      {
+        "rel": "voices/Telugu/Sravya_te_F_1.codes.npy",
+        "size": 6928,
+        "sha256": "e938016bb413c48bb5deb0bf80515f646bd5b7374f5bfb4d616a8ba3e254f373",
+        "mirror": [
+          {
+            "name": "voices--Telugu--Sravya_te_F_1.codes.npy",
+            "size": 6928
+          }
+        ]
+      },
+      {
+        "rel": "voices/Telugu/Sravya_te_F_1.embedding.npy",
+        "size": 896,
+        "sha256": "a62e330ccfe900dbc4caac3e57d661adf284da8c967072dbe91bab154df79c0f",
+        "mirror": [
+          {
+            "name": "voices--Telugu--Sravya_te_F_1.embedding.npy",
+            "size": 896
+          }
+        ]
+      },
+      {
+        "rel": "voices/Telugu/Sravya_te_F_1.wav",
+        "size": 999644,
+        "sha256": "931ba97b7fd35bd808d32e4bf082c07da1fe7a813e469336d6eeeac83e7a42a8",
+        "mirror": [
+          {
+            "name": "voices--Telugu--Sravya_te_F_1.wav",
+            "size": 999644
+          }
+        ]
+      }
+    ],
+    "exact": [
+      {
+        "rel": "zac-encoder.gguf",
+        "size": 4034646368,
+        "sha256": "4c4335196486fd24cc56b24a40ac4548f8cc58a6400bce8e4af4e72160b18053",
+        "mirror": [
+          {
+            "name": "zac-encoder.gguf.part1",
+            "size": 2000000000
+          },
+          {
+            "name": "zac-encoder.gguf.part2",
+            "size": 2000000000
+          },
+          {
+            "name": "zac-encoder.gguf.part3",
+            "size": 34646368
+          }
+        ]
+      },
+      {
+        "rel": "ssl-teacher.gguf",
+        "size": 1548700000,
+        "sha256": "59e4f150e1ccdf54e6349b06605c2274f2262139678688025b6614f1393e415a",
+        "mirror": [
+          {
+            "name": "ssl-teacher.gguf",
+            "size": 1548700000
+          }
+        ]
+      }
+    ],
+    "full_decoder": [
+      {
+        "rel": "zac.gguf",
+        "size": 2199903264,
+        "sha256": "9dc8e29cb681dae320bd77329c0f7a39806ad5de6c231ad111adab1a1f6774d8",
+        "mirror": [
+          {
+            "name": "zac.gguf.part1",
+            "size": 2000000000
+          },
+          {
+            "name": "zac.gguf.part2",
+            "size": 199903264
+          }
+        ]
+      }
+    ]
+  }
+}
