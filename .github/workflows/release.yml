@@ -337,11 +337,11 @@ jobs:
         run: |
           b=target/release/bundle
           mkdir -p out
-          one() { ls $1 2>/dev/null | head -1; }
+          one() { ls $1 2>/dev/null | head -1 || true; }
           case "${{ runner.os }}" in
             Windows)
               f=$(one "$b/nsis/*-setup.exe"); cp "$f" out/Booth-Setup.exe
-              [ -f "$f.sig" ] && cp "$f.sig" out/Booth-Setup.exe.sig
+              if [ -f "$f.sig" ]; then cp "$f.sig" out/Booth-Setup.exe.sig; fi
               cp dist/booth.mcpb out/booth.mcpb ;;
             macOS)
               cp "$(one "$b/dmg/*.dmg")" out/Booth-mac.dmg
@@ -350,7 +350,7 @@ jobs:
               cp dist/booth.mcpb out/booth-mac.mcpb ;;
             Linux)
               f=$(one "$b/appimage/*.AppImage"); cp "$f" out/Booth-linux.AppImage
-              [ -f "$f.sig" ] && cp "$f.sig" out/Booth-linux.AppImage.sig
+              if [ -f "$f.sig" ]; then cp "$f.sig" out/Booth-linux.AppImage.sig; fi
               cp "$(one "$b/deb/*.deb")" out/Booth-linux.deb ;;
           esac
           ls -la out
