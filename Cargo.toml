@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["apps/native/src-tauri", "crates/booth-core", "crates/booth-mcp"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["StepUpGaming"]
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "time", "io-util", "sync"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
+booth-core = { path = "crates/booth-core" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

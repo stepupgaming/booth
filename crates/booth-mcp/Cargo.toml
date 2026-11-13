@@ -1,0 +1,20 @@
+[package]
+name = "booth-mcp"
+description = "Booth's MCP server: lets Claude speak, script and design voices with the local ZONOS3 engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "booth-mcp"
+path = "src/main.rs"
+
+[dependencies]
+booth-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
+schemars = "1"

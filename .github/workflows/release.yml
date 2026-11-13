@@ -1,0 +1,158 @@
+name: Release
+
+# Builds Booth-Setup.exe and attaches it to the GitHub Release for the tag.
+# Push a tag like v0.1.0 to run it, or start it by hand on an existing tag.
+# The installer name never changes, so this link always serves the newest release:
+#   https://github.com/stepupgaming/booth/releases/latest/download/Booth-Setup.exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach to, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # The ZONOS3-Mini engine (zonos3-server.exe) is built from Zyphra's repo at this commit.
+  ZONOS3_REF: f9863b31d0af6f4390bba183a0c9231601b70d61
+  # RTX 20, 30, 40 and 50 series.
+  CUDA_ARCHS: "75;86;89;120"
+  CUDA_VERSION: "12.8.1"
+
+jobs:
+  engine:
+    name: Voice engine (CUDA)
+    runs-on: windows-2022
+    steps:
+      - name: Cache the engine
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: engine-dist
+          key: zonos3-${{ env.ZONOS3_REF }}-cuda${{ env.CUDA_VERSION }}-${{ env.CUDA_ARCHS }}-v1
+
+      - name: Check out ZONOS3-Mini
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Zyphra/ZONOS3-Mini
+          ref: ${{ env.ZONOS3_REF }}
+          path: zonos3
+          submodules: recursive
+
+      - name: Patch for MSVC
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          # MSVC rejects a nested struct that shares its name with a member (C2380).
+          $h = 'zonos3/servers/ggml/src/zonos3.h'
+          $t = Get-Content $h -Raw
+          $t = $t -replace 'struct head \{ int layer = 0, head = 0; \};', 'struct probe_head { int layer = 0, head = 0; };'
+          $t = $t -replace 'std::vector<head> heads;', 'std::vector<probe_head> heads;'
+          Set-Content $h $t -NoNewline
+
+      - name: Install CUDA
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]'
+
+      - name: MSVC environment
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build zonos3-server
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          choco install ninja -y --no-progress
+          cmake -S zonos3/servers/ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_CUDA=ON -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF "-DCMAKE_CUDA_ARCHITECTURES=$env:CUDA_ARCHS" `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+          if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
+          cmake --build build --config Release -j 4 --target zonos3-server
+          if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+
+      - name: Collect the engine
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $out = New-Item -ItemType Directory -Force engine-dist
+          Copy-Item build/zonos3-server.exe $out
+          Get-ChildItem build -Recurse -Filter 'ggml*.dll' | Copy-Item -Destination $out
+          $cuda = "$env:CUDA_PATH\bin"
+          foreach ($n in 'cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll') { Copy-Item (Join-Path $cuda $n) $out }
+          # The MSVC runtime, so the engine starts without the VC++ redistributable.
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+          Copy-Item "$($crt.FullName)\*.dll" $out
+          New-Item -ItemType Directory -Force "$out\laci_heads" | Out-Null
+          Copy-Item zonos3/assets/laci_heads/zonos3_mini_mect60k_heads.json "$out\laci_heads"
+          Copy-Item zonos3/LICENSE "$out\LICENSE-ZONOS3.txt"
+          Get-ChildItem $out -Recurse | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine
+          path: engine-dist
+
+  app:
+    name: Booth installer
+    needs: engine
+    runs-on: windows-2022
+    steps:
+      - name: Tag
+        id: tag
+        shell: bash
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine
+          path: engine-dist
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install packages
+        run: pnpm install --frozen-lockfile
+
+      - name: Build booth-mcp and booth.mcpb
+        shell: pwsh
+        run: ./scripts/build-mcpb.ps1
+
+      - name: Build the installer
+        run: pnpm tauri build --config src-tauri/tauri.release.conf.json
+
+      - name: Rename and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.tag.outputs.tag }}'
+          $setup = Get-ChildItem target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $setup.FullName out/Booth-Setup.exe
+          Copy-Item dist/booth.mcpb out/booth.mcpb
+          Get-ChildItem out | Format-Table Name, Length
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "Booth $($tag.TrimStart('v'))" --generate-notes
+          }
+          gh release upload $tag out/Booth-Setup.exe out/booth.mcpb --clobber

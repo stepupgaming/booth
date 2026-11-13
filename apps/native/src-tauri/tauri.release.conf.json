@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../engine-dist/": "engine/",
+      "../../../target/release/booth-mcp.exe": "booth-mcp.exe",
+      "../../../dist/booth.mcpb": "booth.mcpb"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
