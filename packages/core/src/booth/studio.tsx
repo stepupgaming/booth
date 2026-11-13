@@ -455,7 +455,7 @@ export function Studio() {
                   <div className="faint small">
                     {t.mode === "exact" ? "Exact" : "Shapeable"}
                     {t.decoder ? ` · ${t.decoder === "full_mr" ? "studio decoder" : "fast decoder"}` : ""}
-                    {Object.keys(t.controls).length ? ` · ${Object.keys(t.controls).length} controls` : ""}
+                    {(() => { const n = Object.keys(t.controls).length; return n ? ` · ${n} ${n === 1 ? "control" : "controls"}` : ""; })()}
                   </div>
                 </div>
               );
