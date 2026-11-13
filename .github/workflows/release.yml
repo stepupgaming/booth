@@ -24,15 +24,15 @@ permissions:
 
 env:
   # The ZONOS3-Mini engine (zonos3-server) is built from Zyphra's repo at this commit.
-  ZONOS3_REF: bcb66617512e4d09082438ade8be764af3213327
+  ZONOS3_REF: b171b19149d29b8bcc31e0342d5e3b0063dc479b
   # NVIDIA engine: RTX 20, 30, 40 and 50 series. Booth downloads it on first run when the PC has
   # an NVIDIA card (see crates/booth-core/src/models.rs, which pins this tag and the zip's sha256).
   CUDA_ARCHS: "75;86;89;120"
   CUDA_VERSION: "12.8.1"
-  ENGINE_TAG: engine-bcb6661-cuda12.8
+  ENGINE_TAG: engine-b171b19-cuda12.8
   # The engines that ship inside the app (CPU on Windows and Linux, Metal on macOS) are kept on this
   # prerelease, so each is compiled once. Change the tag whenever ZONOS3_REF or the build flags change.
-  PORTABLE_TAG: engine-bcb6661-portable-1
+  PORTABLE_TAG: engine-b171b19-portable-1
 
 jobs:
   cuda-engine:
@@ -111,7 +111,7 @@ jobs:
           $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
           Copy-Item "$($crt.FullName)\*.dll" $out
           New-Item -ItemType Directory -Force "$out\laci_heads" | Out-Null
-          Copy-Item zonos3/assets/laci_heads/zonos3_mini_mect60k_heads.json "$out\laci_heads"
+          Copy-Item zonos3/assets/laci_heads/*.json "$out\laci_heads"
           Copy-Item zonos3/LICENSE "$out\LICENSE-ZONOS3.txt"
           Compress-Archive -Path engine-dist\* -DestinationPath booth-engine.zip -CompressionLevel Optimal
           gh release view $env:ENGINE_TAG --repo ${{ github.repository }} *> $null
@@ -252,7 +252,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p engine-dist/laci_heads
-          cp zonos3/assets/laci_heads/zonos3_mini_mect60k_heads.json engine-dist/laci_heads/
+          cp zonos3/assets/laci_heads/*.json engine-dist/laci_heads/
           cp zonos3/LICENSE engine-dist/LICENSE-ZONOS3.txt
           ls -la engine-dist
           if [ "${{ runner.os }}" = "Windows" ]; then

@@ -230,11 +230,45 @@ pub fn command_line(engine: &Path, accel: Accel, models: &Path, port: u16) -> Re
     if p("zac.gguf").is_file() {
         packs.push(Pack::FullDecoder);
     }
-    let laci = engine.join("laci_heads").join("zonos3_mini_mect60k_heads.json");
-    if laci.is_file() {
-        args.extend(["--laci-heads".into(), format!("en_us={}", laci.display())]);
+    for (lang, file) in laci_heads(&engine.join("laci_heads")) {
+        args.extend(["--laci-heads".into(), format!("{lang}={}", file.display())]);
     }
     Ok((exe, args, packs))
+}
+
+/// LACI alignment heads per server language, from the engine's `laci_heads` folder.
+/// Engines from b171b19 on have `zonos3_mini_heads.json` (English) and one
+/// `zonos3_mini_heads_<speech code>.json` per other language; older ones only
+/// `zonos3_mini_mect60k_heads.json` (English).
+fn laci_heads(dir: &Path) -> Vec<(String, PathBuf)> {
+    let english = dir.join("zonos3_mini_heads.json");
+    if !english.is_file() {
+        let old = dir.join("zonos3_mini_mect60k_heads.json");
+        return if old.is_file() { vec![("en_us".into(), old)] } else { Vec::new() };
+    }
+    let mut out = vec![("en_us".into(), english.clone()), ("en_gb".into(), english)];
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    files.sort();
+    for file in files {
+        let Some(code) = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix("zonos3_mini_heads_")?.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        // Speech code → the server's language code, where they differ (Zyphra's languages.json).
+        let lang = match code {
+            "fr" => "fr_fr",
+            "pt" => "pt_br",
+            "zh" => "cmn",
+            c => c,
+        };
+        out.push((lang.to_string(), file));
+    }
+    out
 }
 
 /// Start the best engine for the current setting. If the NVIDIA engine can't start (no driver,
