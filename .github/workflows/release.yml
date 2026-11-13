@@ -316,19 +316,21 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo build --release -p booth-mcp
 
+      # pwsh, not bash: on Windows, Git bash's /usr/bin/link shadows the MSVC linker that rustc needs.
       - name: Build the app
-        shell: bash
+        shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
-          extra=()
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            extra=(--config src-tauri/tauri.updater.conf.json)
-          else
-            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: this build can't auto-update anyone."
-          fi
-          pnpm tauri build --config "${{ matrix.config }}" "${extra[@]}"
+          $extra = @()
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            $extra = @('--config', 'src-tauri/tauri.updater.conf.json')
+          } else {
+            Write-Host "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: this build can't auto-update anyone."
+          }
+          pnpm tauri build --config '${{ matrix.config }}' @extra
+          if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
 
       - name: Collect
         shell: bash
