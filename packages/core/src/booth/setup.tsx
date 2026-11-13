@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type DownloadEvent, errText, type Pack, type PackInfo, type SystemCheck } from "@workspace/core/booth/api";
-import { useBooth } from "@workspace/core/booth/store";
+import { isPhone, useBooth } from "@workspace/core/booth/store";
 import { Backdrop, Brand, PlayButton, useToast, Wave } from "@workspace/core/booth/ui";
 
 const PACK_TEXT: Record<Pack, { name: string; desc: string; files: string }> = {
@@ -65,6 +65,15 @@ function CheckRow({ ok, title, detail }: { ok: boolean; title: string; detail: s
 
 /** What Booth will run on: the NVIDIA card, the Mac's graphics, or the processor. */
 function ChipRow({ system }: { system: SystemCheck }) {
+  if (isPhone(system)) {
+    return (
+      <CheckRow
+        detail="Booth runs on the phone’s processor. A line takes a few seconds."
+        ok={true}
+        title={`${system.cpu_threads}-core processor · ${Math.round(system.ram_gb)} GB memory`}
+      />
+    );
+  }
   const cpu = system.cpu ? `${system.cpu.replace(/\s+\d+-Core Processor$/, "")} · ${system.cpu_threads} threads` : "Your processor";
   if (system.gpu_kind === "apple") {
     return (
@@ -172,11 +181,19 @@ export function Setup({ onDone }: { onDone: () => void }) {
   };
 
   const disk = system?.disk_free_gb;
+  // Room for the basics, and for every pack this platform offers (plus takes and voices).
+  const basicsGb = Math.max(1.2, bytes("core") / 1e9);
+  const allGb = offered.reduce((a, p) => a + bytes(p), 0) / 1e9;
+  const needGb = Math.ceil(Math.max(basicsGb, allGb) + 0.5);
   const coreMissing = missing("core");
-  const heads = ["Let’s check your computer", "Choose your sound", finished ? "You’re all set" : "Bringing the voices home"];
+  const phone = isPhone(system);
+  const device = phone ? "phone" : "computer";
+  const heads = [`Let’s check your ${device}`, "Choose your sound", finished ? "You’re all set" : "Bringing the voices home"];
   const subs = [
-    "Booth runs the ZONOS3-Mini voice model entirely on your computer. Nothing you type or record ever leaves it.",
-    "Start small and add the rest later from Settings. Each pack works the moment it lands.",
+    `Booth runs the ZONOS3-Mini voice model entirely on your ${device}. Nothing you type or record ever leaves it.`,
+    offered.length > 1
+      ? "Start small and add the rest later from Settings. Each pack works the moment it lands."
+      : "Everything you need to speak and clone voices, in one download.",
     finished
       ? "The engine wakes up on your first line, and goes back to sleep when you close Booth."
       : "This is the only time it needs the internet.",
@@ -185,21 +202,14 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const left = rate > 0 ? (progress.total - progress.done) / rate : null;
 
   return (
-    <div className="booth setup-bg" style={{ overflowY: "auto" }}>
+    <div className="booth setup-bg setup">
       <Backdrop />
-      <div style={{ position: "absolute", top: 26, left: 30, zIndex: 2 }}>
+      <div className="setup-brand">
         <Brand />
       </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          padding: "clamp(28px, 6vh, 64px) 16px",
-          minHeight: "100%",
-        }}
-      >
-        <div style={{ width: "100%", maxWidth: 780, display: "flex", flexDirection: "column", alignItems: "center", gap: "clamp(18px, 3vh, 28px)" }}>
-          <div style={{ position: "relative", width: "min(232px, 22vh)", height: "min(232px, 22vh)", flexShrink: 0 }}>
+      <div className="setup-body">
+        <div className="setup-col">
+          <div className="setup-hero">
             <span
               style={{
                 position: "absolute",
@@ -232,23 +242,22 @@ export function Setup({ onDone }: { onDone: () => void }) {
             <div className="mono muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>
               Step {step + 1} of 3
             </div>
-            <h1 style={{ margin: 0, fontSize: 44, fontWeight: 600, letterSpacing: "-0.035em", lineHeight: 1.05 }}>
-              {heads[step]}
-            </h1>
-            <p style={{ margin: 0, color: "var(--b-text-2)", fontSize: 16, lineHeight: 1.6, maxWidth: 560 }}>{subs[step]}</p>
+            <h1 className="setup-head">{heads[step]}</h1>
+            <p className="setup-sub">{subs[step]}</p>
           </div>
 
-          <div
-            className="glass"
-            style={{ width: "100%", padding: 22, borderRadius: 26, display: "flex", flexDirection: "column", gap: 10 }}
-          >
+          <div className="glass setup-card">
             {step === 0 ? (
               system ? (
                 <>
                   <ChipRow system={system} />
                   <CheckRow
-                    detail="You need 1.2 GB for the basics, up to 9 GB with everything."
-                    ok={disk == null || disk > 9}
+                    detail={
+                      offered.length > 1
+                        ? `You need ${basicsGb.toFixed(1)} GB for the basics, up to ${needGb} GB with everything.`
+                        : `You need ${basicsGb.toFixed(1)} GB for the voices.`
+                    }
+                    ok={disk == null || disk > needGb}
                     title={
                       disk == null
                         ? "Disk space: couldn’t check"
@@ -256,7 +265,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
                     }
                   />
                   <CheckRow
-                    detail="No Python or PyTorch: the engine is one native program."
+                    detail={
+                      phone
+                        ? "The voice engine runs on the phone itself. No account, no cloud."
+                        : "No Python or PyTorch: the engine is one native program."
+                    }
                     ok={true}
                     title={system.os ?? "Your system"}
                   />
@@ -270,7 +283,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
                 </>
               ) : (
                 <div className="muted" style={{ display: "flex", gap: 10, alignItems: "center", padding: 8 }}>
-                  <span className="spinner" /> Checking your computer…
+                  <span className="spinner" /> Checking your {device}…
                 </div>
               )
             ) : null}
@@ -369,14 +382,14 @@ export function Setup({ onDone }: { onDone: () => void }) {
                 </div>
                 <div className="faint" style={{ fontSize: 13, lineHeight: 1.6 }}>
                   Resumes where it left off if you close the app. Every file is checked after download. While you wait, hear a voice: this sample
-                  ships with the installer.
+                  ships with Booth.
                 </div>
                 <div className="tile" style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 16px 10px 10px" }}>
                   <PlayButton label="a sample of Rupert" src="/sample-rupert.mp3" />
                   <span style={{ display: "flex", flexDirection: "column", gap: 1, flex: "none", lineHeight: 1.3 }}>
                     <span style={{ fontWeight: 500, fontSize: 13 }}>Hear Rupert</span>
                     <span className="faint" style={{ fontSize: 11 }}>
-                      ships with the installer
+                      ships with Booth
                     </span>
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>

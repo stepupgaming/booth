@@ -11,7 +11,7 @@ import {
   type Voice,
 } from "@workspace/core/booth/api";
 
-export type View = "setup" | "studio" | "voices" | "create" | "settings";
+export type View = "setup" | "studio" | "library" | "voices" | "create" | "settings";
 
 interface BoothState {
   view: View;
@@ -127,6 +127,13 @@ export const useBooth = create<BoothState>((set, get) => ({
     }
   },
 }));
+
+/** A phone or tablet (Android, iOS): fewer packs, no folders to reveal. Before the system
+ * check answers, guess from the web view. */
+export const isPhone = (system: SystemCheck | null | undefined) =>
+  system
+    ? system.platform === "android" || system.platform === "ios"
+    : typeof navigator !== "undefined" && /Android|iPhone|iPad/.test(navigator.userAgent);
 
 export const currentVoice = (s: { voices: Voice[]; voiceId: string | null }) =>
   s.voices.find((v) => v.id === s.voiceId) ?? null;

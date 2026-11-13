@@ -170,6 +170,7 @@ const overview = (): Overview => ({
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let takeN = 0;
+const takes: Take[] = [];
 const take = (text: string, v: string, seed: number | null, controls: Record<string, number> = {}): Take => ({
   id: `t${++takeN}`,
   text,
@@ -187,6 +188,8 @@ const take = (text: string, v: string, seed: number | null, controls: Record<str
   path: SAMPLE,
 });
 
+const keep = (t: Take) => (takes.unshift(t), t);
+
 type Args = Record<string, any>;
 
 /** The preview URL's flags, read when used (not on the server, where there is no location). */
@@ -197,6 +200,9 @@ const systemCheck = () => {
   const base = { cpu: "AMD Ryzen 9 9900X 12-Core Processor", cpu_threads: 24, ram_gb: 64, disk_free_gb: 412, engine_found: true };
   if (q.has("mac")) {
     return { ...base, gpu: "Apple M3 Pro", vram_gb: 36, gpu_kind: "apple", cpu: "Apple M3 Pro", cpu_threads: 12, ram_gb: 36, disk: "/", os: "macOS 15.1", platform: "macos" };
+  }
+  if (q.has("android")) {
+    return { ...base, cpu: null, cpu_threads: 8, ram_gb: 12, disk_free_gb: 6, gpu: null, vram_gb: null, gpu_kind: "none", disk: "/data", os: "Android 17 on SM-S938U", platform: "android" };
   }
   if (q.has("cpu")) {
     return { ...base, gpu: null, vram_gb: null, gpu_kind: "none", disk: "C:", os: "Windows 11", platform: "windows" };
@@ -211,6 +217,24 @@ export function installMock() {
       p.present = false;
     }
   }
+  // ?android: a phone, which only gets the core pack.
+  if (new URLSearchParams(location.search).has("android")) {
+    packs.splice(1);
+  }
+  // A few takes for the Library, some saved.
+  const lines = ["Welcome back to the channel.", "This one took three tries to get right.", "Thanks for watching, see you next week."];
+  for (const [i, v] of ["rupert", "rupert", voices[1]?.id ?? "rupert", voices[2]?.id ?? "rupert"].entries()) {
+    for (const [j, text] of lines.entries()) {
+      const t = take(text, v, 1000 + i * 10 + j);
+      t.created_at = new Date(Date.now() - (i * 3 + j) * 3_600_000).toISOString();
+      t.starred = (i + j) % 2 === 0;
+      takes.unshift(t);
+    }
+  }
+  const script = take("Welcome back to the channel. Thanks for watching, see you next week.", "script", null);
+  script.voice_name = "Rupert + Ava";
+  script.starred = true;
+  takes.unshift(script);
   // A plain browser can load the sample directly; keep "file" paths as they are.
   (window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> }).__TAURI_INTERNALS__ ??= {};
   mockIPC(
@@ -257,9 +281,9 @@ export function installMock() {
           return SAMPLE;
         case "speak":
           await wait(700);
-          return take(p.a.text, p.a.voice ?? "rupert", p.a.seed ?? null, p.a.controls);
+          return keep(take(p.a.text, p.a.voice ?? "rupert", p.a.seed ?? null, p.a.controls));
         case "export_takes":
-          return take("export", "rupert", null);
+          return keep({ ...take("export", "script", null), starred: true });
         case "create_clone": {
           await wait(900);
           const v: Voice = {
@@ -311,7 +335,22 @@ export function installMock() {
           }
           return null;
         case "list_takes":
-          return [];
+          return [...takes].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, p.limit ?? 50);
+        case "star_take": {
+          const t = takes.find((x) => x.id === p.id);
+          if (!t) {
+            throw "no such take";
+          }
+          t.starred = p.starred;
+          return t;
+        }
+        case "delete_take": {
+          const i = takes.findIndex((x) => x.id === p.id);
+          if (i >= 0) {
+            takes.splice(i, 1);
+          }
+          return null;
+        }
         case "engine_stop":
           return true;
         case "reveal":

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, canExact, canShape, errText, fileUrl, type Take, type Voice } from "@workspace/core/booth/api";
-import { packPresent, round2, useBooth } from "@workspace/core/booth/store";
+import { isPhone, packPresent, round2, useBooth } from "@workspace/core/booth/store";
 import { DoseSlider, Dropdown, Icon, Orb, PlayButton, usePlayer, useToast, Wave } from "@workspace/core/booth/ui";
 
 // ---------- audio helpers ----------
@@ -220,6 +220,7 @@ export function CreateVoice() {
   const work = useBooth((s) => s.work);
   const play = usePlayer((s) => s.play);
   const hifiInstalled = packPresent(overview, "exact");
+  const phone = useBooth((s) => isPhone(s.system));
 
   const [src, setSrc] = useState<"clip" | "design">("clip");
   const [step, setStep] = useState(0);
@@ -520,8 +521,9 @@ export function CreateVoice() {
                           // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length bar list
                           key={i}
                           style={{
-                            flex: "none",
-                            width: 1.5,
+                            // shrink on narrow screens so the clip never runs past its card
+                            flex: "0 1 1.5px",
+                            minWidth: 0.5,
                             borderRadius: 1,
                             height: Math.max(2, Math.round(v * 60)),
                             background: inSel ? "#fff" : "rgba(255,255,255,0.2)",
@@ -598,7 +600,9 @@ export function CreateVoice() {
               desc: "The model keeps your recording and listens to it every time it speaks. Closest to the real person, especially on clean audio. Also saves the fingerprint, so you can still shape it.",
               note: hifiInstalled
                 ? "Some takes can jump in pitch: the Test step makes three so you can hear it."
-                : "Needs the High-fidelity pack (5.6 GB). Download it in Settings.",
+                : phone
+                  ? "Not on phones yet: it needs a 5.6 GB pack. Quick works on every phone."
+                  : "Needs the High-fidelity pack (5.6 GB). Download it in Settings.",
             },
             {
               id: false,

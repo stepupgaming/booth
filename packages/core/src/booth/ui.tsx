@@ -137,6 +137,38 @@ export const Icon = {
       <path d="M20 20l-4-4" />
     </svg>
   ),
+  library: (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" width="18">
+      <rect height="16" rx="1.5" width="4" x="3" y="4" />
+      <rect height="16" rx="1.5" width="4" x="9" y="4" />
+      <path d="M15.2 5.3l3.8-1 3.6 14.6-3.8 1z" />
+    </svg>
+  ),
+  save: (
+    <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeWidth="1.9" viewBox="0 0 24 24" width="15">
+      <path d="M6 3h12v18l-6-4.5L6 21z" />
+    </svg>
+  ),
+  savedOn: (
+    <svg aria-hidden="true" fill="currentColor" height="15" stroke="currentColor" strokeWidth="1.9" viewBox="0 0 24 24" width="15">
+      <path d="M6 3h12v18l-6-4.5L6 21z" />
+    </svg>
+  ),
+  back: (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="16">
+      <path d="M15 5l-7 7 7 7" />
+    </svg>
+  ),
+  trash: (
+    <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" width="15">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+    </svg>
+  ),
+  folder: (
+    <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" width="15">
+      <path d="M3 6h6l2 2h10v11H3z" />
+    </svg>
+  ),
   star: (on: boolean) => (
     <svg aria-hidden="true" fill={on ? "currentColor" : "none"} height="14" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" width="14">
       <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />

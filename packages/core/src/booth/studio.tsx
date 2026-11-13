@@ -2,8 +2,8 @@
 
 import { useMemo, useRef, useState } from "react";
 import { api, canExact, canShape, errText, fileUrl, type Mode, type Take, voiceDesc } from "@workspace/core/booth/api";
-import { controlById, currentVoice, packPresent, round2, toDose, useBooth } from "@workspace/core/booth/store";
-import { DoseSlider, Dropdown, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
+import { controlById, currentVoice, isPhone, packPresent, round2, toDose, useBooth } from "@workspace/core/booth/store";
+import { DoseSlider, Dropdown, Icon, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
 
 interface Line {
   id: string;
@@ -82,6 +82,7 @@ export function Studio() {
   const go = useBooth((s) => s.go);
   const work = useBooth((s) => s.work);
   const refresh = useBooth((s) => s.refresh);
+  const phone = useBooth((s) => isPhone(s.system));
 
   const [lines, setLines] = usePref<Line[]>("lines", firstLines);
   const [sel, setSel] = usePref("selLine", 0);
@@ -205,6 +206,22 @@ export function Studio() {
     );
   };
 
+  /** Save a take to the Library (or take it out again). */
+  const toggleSaved = async (i: number, t: Take) => {
+    try {
+      const next = await api.starTake(t.id, !t.starred);
+      const cur = linesRef.current[i];
+      if (cur) {
+        setLine(i, { takes: cur.takes.map((x) => (x.id === t.id ? { ...x, starred: next.starred } : x)) });
+      }
+      if (next.starred) {
+        toast.ok("Saved to your Library");
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    }
+  };
+
   const keptTake = (l: Line) => l.takes.find((t) => t.id === l.kept) ?? l.takes[0];
   const keptList = lines.map(keptTake).filter((t): t is Take => !!t);
 
@@ -214,8 +231,13 @@ export function Studio() {
         keptList.map((t) => t.id),
         250
       );
-      toast.ok(`Exported ${t.seconds.toFixed(1)} s to ${t.path}`);
-      api.reveal(t.path).catch(() => undefined);
+      // An export is saved straight away, so it is waiting in the Library.
+      if (phone) {
+        toast.ok(`Exported ${t.seconds.toFixed(1)} s · it’s in your Library`);
+      } else {
+        toast.ok(`Exported ${t.seconds.toFixed(1)} s to ${t.path}`);
+        api.reveal(t.path).catch(() => undefined);
+      }
     } catch (e) {
       toast.bad(errText(e));
     }
@@ -449,6 +471,16 @@ export function Studio() {
                       type="button"
                     >
                       {k ? "Kept" : "Keep"}
+                    </button>
+                    <button
+                      aria-label={t.starred ? `Take ${n + 1} is saved to the Library` : `Save take ${n + 1} to the Library`}
+                      aria-pressed={t.starred}
+                      className={`btn sm icon-btn ${t.starred ? "saved" : "ghost"}`}
+                      onClick={() => toggleSaved(selIdx, t)}
+                      title={t.starred ? "Saved to the Library (click to remove)" : "Save to the Library"}
+                      type="button"
+                    >
+                      {t.starred ? Icon.savedOn : Icon.save}
                     </button>
                   </div>
                   <Wave height={44} seed={t.seed ?? n + 1} src={src} />
@@ -709,7 +741,7 @@ export function Studio() {
                 value: "full_mr",
                 label: "Best (studio decoder)",
                 disabled: !fullOk,
-                hint: fullOk ? undefined : "download in Settings",
+                hint: fullOk ? undefined : phone ? "not on phones yet" : "download in Settings",
               },
               { value: "keep2_plain", label: "Fast (pruned decoder)" },
             ]}

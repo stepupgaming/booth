@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CreateVoice } from "@workspace/core/booth/create-voice";
+import { Library } from "@workspace/core/booth/library";
 import { Settings } from "@workspace/core/booth/settings";
 import { Setup } from "@workspace/core/booth/setup";
 import { Shell } from "@workspace/core/booth/shell";
@@ -13,6 +14,8 @@ import { Voices } from "@workspace/core/booth/voices";
 function Views() {
   const view = useBooth((s) => s.view);
   switch (view) {
+    case "library":
+      return <Library />;
     case "voices":
       return <Voices />;
     case "create":

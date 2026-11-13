@@ -41,6 +41,100 @@ body {
     radial-gradient(820px 520px at 50% -14%, rgba(240, 32, 42, 0.16), transparent 62%),
     radial-gradient(700px 520px at 100% 95%, rgba(70, 80, 110, 0.14), transparent 60%);
 }
+/* First-run setup fits one screen: the hero picture gives up its height first. */
+.setup {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+.setup-brand {
+  position: absolute;
+  top: 26px;
+  left: 30px;
+  z-index: 2;
+}
+.setup-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  padding: clamp(20px, 5vh, 64px) 16px clamp(14px, 3vh, 40px);
+}
+.setup-col {
+  width: 100%;
+  max-width: 780px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 2.6vh, 28px);
+}
+.setup-col > * {
+  flex-shrink: 0;
+}
+.setup-col > .setup-hero {
+  position: relative;
+  flex: 0 1 232px;
+  min-height: 0;
+  max-height: min(232px, 26vh);
+  aspect-ratio: 1;
+}
+.setup-col > .setup-card {
+  /* the hero gives up its height first; the card only scrolls once the hero is gone */
+  flex-shrink: 0.0001;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  padding: 22px;
+  border-radius: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.setup-head {
+  margin: 0;
+  font-size: 44px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+.setup-sub {
+  margin: 0;
+  color: var(--b-text-2);
+  font-size: 16px;
+  line-height: 1.6;
+  max-width: 560px;
+}
+.narrow-only {
+  display: none;
+}
+/* short windows: tighter setup so it still fits without scrolling */
+@media (max-height: 760px) {
+  .setup-body {
+    padding-top: 14px;
+    padding-bottom: 12px;
+  }
+  .setup-col {
+    gap: 10px;
+  }
+  .setup-head {
+    font-size: 34px;
+  }
+  .setup-sub {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .setup-col > .setup-card {
+    padding: 14px;
+    gap: 8px;
+  }
+  .setup-col .tile {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+}
+
 .booth * {
   box-sizing: border-box;
 }
@@ -183,6 +277,59 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
+/* Library: voices down the side, the chosen voice's takes beside them */
+.lib {
+  display: grid;
+  grid-template-columns: minmax(220px, 290px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.lib-shelves {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+}
+.lib-shelves button {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.lib-shelves button:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.lib-shelves button[aria-current="true"] {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.lib-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lib-take {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lib-text {
+  font-size: 15px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .b-brand {
   display: flex;
   align-items: center;
@@ -272,6 +419,14 @@ body {
 .btn.kept {
   background: rgba(240, 32, 42, 0.18);
   border: 1px solid rgba(240, 32, 42, 0.55);
+  color: #fff;
+}
+.btn.icon-btn {
+  padding: 7px 9px;
+}
+.btn.saved {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.32);
   color: #fff;
 }
 .link {
@@ -734,6 +889,30 @@ pre.code {
   .b-nav > :not(button),
   .wide-only {
     display: none;
+  }
+  .narrow-only {
+    display: inline;
+  }
+  .setup-brand {
+    position: static;
+    padding: 14px 18px 0;
+  }
+  .setup-body {
+    padding: 8px 14px 14px;
+  }
+  .setup-head {
+    font-size: 30px;
+  }
+  .setup-sub {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .setup-col > .setup-card {
+    padding: 12px;
+    border-radius: 22px;
+  }
+  .setup-col .tile {
+    padding: 12px 14px !important;
   }
   .b-nav button {
     flex: 1 1 0;

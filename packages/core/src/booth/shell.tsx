@@ -50,10 +50,11 @@ function UpdateCard() {
   );
 }
 
-const NAV: { view: View; label: string; icon: ReactNode }[] = [
+const NAV: { view: View; label: string; short?: string; icon: ReactNode }[] = [
   { view: "studio", label: "Studio", icon: Icon.studio },
+  { view: "library", label: "Library", icon: Icon.library },
   { view: "voices", label: "Voices", icon: Icon.voices },
-  { view: "create", label: "Create a voice", icon: Icon.mic },
+  { view: "create", label: "Create a voice", short: "Create", icon: Icon.mic },
   { view: "settings", label: "Settings", icon: Icon.settings },
 ];
 
@@ -130,7 +131,14 @@ export function Shell({ children }: { children: ReactNode }) {
               type="button"
             >
               {n.icon}
-              {n.label}
+              {n.short ? (
+                <>
+                  <span className="wide-only">{n.label}</span>
+                  <span className="narrow-only">{n.short}</span>
+                </>
+              ) : (
+                n.label
+              )}
             </button>
           ))}
           <UpdateCard />
