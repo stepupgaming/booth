@@ -171,7 +171,7 @@ async fn pack_info() -> Res<Vec<PackInfo>> {
                 Pack::Core => 1_160_000_000,
                 Pack::Exact => 5_600_000_000,
                 Pack::FullDecoder => 2_200_000_000,
-                Pack::GpuEngine => 743_066_931,
+                Pack::GpuEngine => models::CUDA_ENGINE_SIZE,
             },
         };
         out.push(PackInfo {
@@ -698,6 +698,15 @@ pub fn run() {
                 // quarantine from the engine and booth-mcp too, so macOS doesn't block them on start.
                 #[cfg(target_os = "macos")]
                 let _ = std::process::Command::new("xattr").arg("-dr").arg("com.apple.quarantine").arg(&dir).status();
+            }
+            // A Booth update moved to a newer NVIDIA engine: fetch it quietly, keep the old one meanwhile.
+            if models::cuda_engine_outdated() && !DOWNLOADING.swap(true, Ordering::SeqCst) {
+                tauri::async_runtime::spawn(async {
+                    let _ = models::upgrade_cuda_engine(&reqwest::Client::new()).await;
+                    DOWNLOADING.store(false, Ordering::SeqCst);
+                });
+            } else {
+                tauri::async_runtime::spawn(models::remove_older_cuda_engines());
             }
             Ok(())
         })

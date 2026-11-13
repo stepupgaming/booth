@@ -81,26 +81,71 @@ pub enum Pack {
 
 /// The CUDA engine: `booth-engine.zip` on a prerelease of the Booth repo, built by the release
 /// workflow from the same ZONOS3-Mini commit as the bundled CPU engine. Pinned by size and SHA-256.
-pub const CUDA_ENGINE_ID: &str = "cuda-f9863b3-12.8";
+pub const CUDA_ENGINE_ID: &str = "cuda-bcb6661-12.8";
 const CUDA_ENGINE_URL: &str =
-    "https://github.com/stepupgaming/booth/releases/download/engine-f9863b3-cuda12.8/booth-engine.zip";
-const CUDA_ENGINE_SIZE: u64 = 743_066_931;
-const CUDA_ENGINE_SHA256: &str = "9fd0d675b4c6aeac6ea00dd5054593183517297e4f26c6675b421eac21fe53f0";
+    "https://github.com/stepupgaming/booth/releases/download/engine-bcb6661-cuda12.8/booth-engine.zip";
+pub const CUDA_ENGINE_SIZE: u64 = 743_065_616;
+const CUDA_ENGINE_SHA256: &str = "bd06c7ff76aa8d9f1e062dd78119b559b77d256b415f6d355bde837104308192";
 
 /// Where the CUDA engine lives once downloaded.
 pub fn cuda_engine_dir() -> PathBuf {
     crate::paths::engines_dir().join(CUDA_ENGINE_ID)
 }
 
-/// The CUDA engine to use, if there is one: the download, else the `engine/` folder that Booth 0.1
-/// installed next to the app (an update to 0.2 leaves it in place). Windows only.
+/// Older downloads of the CUDA engine (`engines/cuda-<commit>-<cuda>` from earlier Booth versions).
+fn older_cuda_engines() -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(crate::paths::engines_dir()) else { return Vec::new() };
+    let mut dirs: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| {
+            let name = d.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            name.starts_with("cuda-") && !name.contains('.') && name != CUDA_ENGINE_ID
+        })
+        .collect();
+    // Newest first. Callers that run one check it still has the server in it.
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.metadata().and_then(|m| m.modified()).ok()));
+    dirs
+}
+
+/// The CUDA engine to use, if there is one: the current download, else an older download or the
+/// `engine/` folder that Booth 0.1 installed next to the app, which keep working until the current
+/// one has downloaded (see `cuda_engine_outdated`). Windows only.
 pub fn installed_cuda_engine() -> Option<PathBuf> {
     if !cfg!(windows) {
         return None;
     }
     let exe = crate::paths::SERVER_EXE;
     let legacy = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("engine")));
-    [Some(cuda_engine_dir()), legacy].into_iter().flatten().find(|d| d.join(exe).is_file())
+    std::iter::once(cuda_engine_dir())
+        .chain(older_cuda_engines())
+        .chain(legacy)
+        .find(|d| d.join(exe).is_file())
+}
+
+/// True when the person uses an NVIDIA engine from an earlier Booth: the app then downloads the
+/// current one in the background (`upgrade_cuda_engine`).
+pub fn cuda_engine_outdated() -> bool {
+    installed_cuda_engine().is_some_and(|d| d != cuda_engine_dir())
+}
+
+/// Download the current NVIDIA engine, then delete older downloads. The old engine keeps running
+/// until then; the next engine start uses the new one.
+pub async fn upgrade_cuda_engine(client: &reqwest::Client) -> Result<()> {
+    download_cuda_engine(client, |_| {}).await?;
+    remove_older_cuda_engines().await;
+    Ok(())
+}
+
+/// Delete older NVIDIA engine downloads once the current one is installed. One still running
+/// (Claude's booth-mcp, say) can't be fully deleted on Windows; the next app start tries again.
+pub async fn remove_older_cuda_engines() {
+    if !cuda_engine_dir().join(crate::paths::SERVER_EXE).is_file() {
+        return;
+    }
+    for d in older_cuda_engines() {
+        let _ = tokio::fs::remove_dir_all(&d).await;
+    }
 }
 
 impl Pack {

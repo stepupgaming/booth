@@ -3,7 +3,7 @@
 //!   cargo run -p booth-core --example fetch -- core C:\tmp\models
 //!   BOOTH_MODEL_SOURCE=github cargo run -p booth-core --example fetch -- full_decoder C:\tmp\models
 //!   BOOTH_HF_BASE=http://127.0.0.1:9 cargo run ...   (Hugging Face unreachable: falls back to GitHub)
-//!   cargo run -p booth-core --example fetch -- refresh C:	mp\models   (the pre-start small-file refresh)
+//!   cargo run -p booth-core --example fetch -- refresh C:\tmp\models   (the pre-start small-file refresh)
 use std::time::Instant;
 
 use booth_core::models::{self, Pack};
