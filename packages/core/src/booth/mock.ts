@@ -183,7 +183,7 @@ const take = (text: string, v: string, seed: number | null, controls: Record<str
   controls,
   decoder: settings.decoder,
   via: "app",
-  parts: [],
+  // no `parts`: like the real app, which leaves it out unless the take is a rendered script
   starred: false,
   path: SAMPLE,
 });

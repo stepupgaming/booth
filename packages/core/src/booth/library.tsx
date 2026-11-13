@@ -93,7 +93,7 @@ function TakeRow({
           <span className="lib-text">{t.text}</span>
           <span className="mono faint" style={{ fontSize: 11 }}>
             {when(t.created_at)} · {t.seconds.toFixed(1)} s
-            {t.parts.length ? ` · ${t.parts.length} lines · ${t.voice_name}` : t.mode ? ` · ${t.mode === "exact" ? "Exact" : "Shapeable"}` : ""}
+            {t.parts?.length ? ` · ${t.parts.length} lines · ${t.voice_name}` : t.mode ? ` · ${t.mode === "exact" ? "Exact" : "Shapeable"}` : ""}
             {t.via === "mcp" ? " · from Claude" : ""}
           </span>
         </span>

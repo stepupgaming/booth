@@ -117,7 +117,8 @@ export interface Take {
   controls: Record<string, number>;
   decoder: string | null;
   via: string;
-  parts: ScriptLine[];
+  /** Only on a rendered script: Rust leaves it out when it's empty. */
+  parts?: ScriptLine[];
   starred: boolean;
   path: string;
 }
