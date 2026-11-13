@@ -23,21 +23,35 @@ env:
   # RTX 20, 30, 40 and 50 series.
   CUDA_ARCHS: "75;86;89;120"
   CUDA_VERSION: "12.8.1"
+  # The built engine is kept as booth-engine.zip on a prerelease with this tag, so it is compiled
+  # once (about 1.5 hours) instead of on every release. Change the tag whenever ZONOS3_REF,
+  # CUDA_ARCHS or CUDA_VERSION changes, and the next release builds and stores a new one.
+  ENGINE_TAG: engine-f9863b3-cuda12.8
 
 jobs:
   engine:
     name: Voice engine (CUDA)
     runs-on: windows-2022
     steps:
-      - name: Cache the engine
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: engine-dist
-          key: zonos3-${{ env.ZONOS3_REF }}-cuda${{ env.CUDA_VERSION }}-${{ env.CUDA_ARCHS }}-v1
+      - name: Look for the stored engine
+        id: stored
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:ENGINE_TAG --repo ${{ github.repository }} --pattern booth-engine.zip
+          if ($LASTEXITCODE -eq 0) {
+            Expand-Archive booth-engine.zip -DestinationPath engine-dist
+            "found=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Using the engine stored on $env:ENGINE_TAG"
+          } else {
+            "found=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No stored engine on $env:ENGINE_TAG yet; building it"
+          }
+          exit 0
 
       - name: Check out ZONOS3-Mini
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.stored.outputs.found != 'true'
         uses: actions/checkout@v4
         with:
           repository: Zyphra/ZONOS3-Mini
@@ -46,7 +60,7 @@ jobs:
           submodules: recursive
 
       - name: Patch for MSVC
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.stored.outputs.found != 'true'
         shell: pwsh
         run: |
           # MSVC rejects a nested struct that shares its name with a member (C2380).
@@ -57,7 +71,7 @@ jobs:
           Set-Content $h $t -NoNewline
 
       - name: Install CUDA
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.stored.outputs.found != 'true'
         uses: Jimver/cuda-toolkit@v0.2.24
         with:
           cuda: ${{ env.CUDA_VERSION }}
@@ -65,11 +79,11 @@ jobs:
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]'
 
       - name: MSVC environment
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.stored.outputs.found != 'true'
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Build zonos3-server
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.stored.outputs.found != 'true'
         shell: pwsh
         run: |
           choco install ninja -y --no-progress
@@ -81,7 +95,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 
       - name: Collect the engine
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.stored.outputs.found != 'true'
         shell: pwsh
         run: |
           $out = New-Item -ItemType Directory -Force engine-dist
@@ -96,6 +110,22 @@ jobs:
           Copy-Item zonos3/assets/laci_heads/zonos3_mini_mect60k_heads.json "$out\laci_heads"
           Copy-Item zonos3/LICENSE "$out\LICENSE-ZONOS3.txt"
           Get-ChildItem $out -Recurse | Format-Table Name, Length
+
+      - name: Store the engine
+        if: steps.stored.outputs.found != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path engine-dist\* -DestinationPath booth-engine.zip -CompressionLevel Optimal
+          # A prerelease, so it never becomes "latest" and the Booth-Setup.exe link is unaffected.
+          gh release view $env:ENGINE_TAG --repo ${{ github.repository }} *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:ENGINE_TAG --repo ${{ github.repository }} --prerelease --latest=false `
+              --title "Voice engine build ($env:ENGINE_TAG)" `
+              --notes "zonos3-server from Zyphra/ZONOS3-Mini@$env:ZONOS3_REF, CUDA $env:CUDA_VERSION, archs $env:CUDA_ARCHS. Used by the release workflow; not an app download."
+          }
+          gh release upload $env:ENGINE_TAG booth-engine.zip --repo ${{ github.repository }} --clobber
 
       - uses: actions/upload-artifact@v4
         with:
