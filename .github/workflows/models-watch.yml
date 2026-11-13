@@ -1,0 +1,80 @@
+# Daily check of Zyphra's ZONOS3-Mini against what Booth pins:
+#  - the model files in crates/booth-core/models.lock.json (Hugging Face), and
+#  - the engine source (servers/ggml on GitHub) at ZONOS3_REF in release.yml.
+# When something changed, it opens one issue labelled "upstream" (and edits it if more changes),
+# so nobody has to watch Zyphra's repos. Nothing in Booth changes until the lock is regenerated.
+name: Watch ZONOS3-Mini upstream
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Compare with upstream
+        run: |
+          set +e
+          {
+            echo "## Model files (Hugging Face)"
+            echo '```'
+            node scripts/models-lock.mjs --check 2>&1
+            models=$?
+            echo '```'
+            echo
+            echo "## Engine source (servers/ggml on GitHub)"
+            ref=$(sed -n 's/^ *ZONOS3_REF: *//p' .github/workflows/release.yml)
+            files=$(gh api "repos/Zyphra/ZONOS3-Mini/compare/$ref...main" --jq '[.files[].filename | select(startswith("servers/ggml/"))] | .[]' 2>&1)
+            engine_err=$?
+            if [ $engine_err -ne 0 ]; then
+              echo "Couldn't compare: $files"
+            elif [ -z "$files" ]; then
+              echo "No changes since the pinned commit ${ref:0:10}."
+            else
+              echo "Changed since the pinned commit ${ref:0:10} ([compare](https://github.com/Zyphra/ZONOS3-Mini/compare/$ref...main)):"
+              echo '```'; echo "$files"; echo '```'
+            fi
+            echo "MODELS=$models" >> "$GITHUB_ENV"
+            echo "ENGINE=$([ $engine_err -ne 0 ] || [ -n "$files" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+          } > report.md
+          cat report.md
+
+      - name: Open or update the issue
+        if: env.MODELS != '0' || env.ENGINE != '0'
+        run: |
+          {
+            echo "Zyphra changed something Booth pins. Booth keeps working on its pinned copy; this is a heads-up."
+            echo
+            cat report.md
+            echo
+            echo "### What to do"
+            echo "- New or changed model files: try them, then run \`node scripts/models-lock.mjs\` to pin today's main and commit the lock. The mirror workflow copies the new files to GitHub; the next release ships the new pin."
+            echo "- Files removed or the check failing: nothing to do right away. Booth falls back to the GitHub mirror."
+            echo "- Engine changes: read the compare; to adopt them, change ZONOS3_REF and the engine tags in release.yml."
+            echo
+            echo "_Updated $(date -u +'%Y-%m-%d %H:%M UTC') by the daily watch. Close this issue when handled; it reopens as a new one if things change again._"
+          } > body.md
+          gh label create upstream --color F0202A --description "Changes in Zyphra's ZONOS3-Mini" 2>/dev/null || true
+          num=$(gh issue list --label upstream --state open --json number --jq '.[0].number // empty')
+          if [ -z "$num" ]; then
+            gh issue create --title "Upstream ZONOS3-Mini changed" --label upstream --body-file body.md
+          else
+            old=$(gh issue view "$num" --json body --jq .body | sed '/^_Updated /d')
+            if [ "$old" != "$(sed '/^_Updated /d' body.md)" ]; then
+              gh issue edit "$num" --body-file body.md
+              gh issue comment "$num" --body "Something else changed upstream; the report above is updated."
+            fi
+          fi

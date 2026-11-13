@@ -1,19 +1,62 @@
 //! The model files Booth needs, grouped into packs, and a resumable, checksummed downloader.
 //!
-//! Weights come from the Hugging Face repo `Zyphra/ZONOS3-Mini` (Apache-2.0). Sizes and SHA-256
-//! checksums are read from the Hub's tree API at download time, so a re-upload upstream never
-//! leaves Booth with a stale list.
+//! Weights come from the Hugging Face repo `Zyphra/ZONOS3-Mini` (Apache-2.0), pinned to one commit
+//! by `models.lock.json` (made by `scripts/models-lock.mjs`), which also gives every file's size and
+//! SHA-256. Each file is fetched from Hugging Face at that commit, and from Booth's GitHub mirror
+//! release if Hugging Face fails; either way the bytes must match the lock. Because the bytes are
+//! the same everywhere, a download that breaks on one source resumes from the other.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 pub const HF_REPO: &str = "Zyphra/ZONOS3-Mini";
-const HF_REVISION: &str = "main";
+
+/// A source that sends nothing for this long is dropped for the next one.
+const STALL: Duration = Duration::from_secs(30);
+
+#[derive(Deserialize)]
+struct Lock {
+    repo: String,
+    revision: String,
+    /// Base URL of the GitHub release that holds the copies.
+    mirror: String,
+    packs: HashMap<String, Vec<LockFile>>,
+}
+
+#[derive(Deserialize)]
+struct LockFile {
+    rel: String,
+    size: u64,
+    sha256: String,
+    /// The file's copy on the mirror: one asset, or parts to join in order.
+    mirror: Vec<LockPart>,
+}
+
+#[derive(Deserialize)]
+struct LockPart {
+    name: String,
+    size: u64,
+}
+
+fn lock() -> &'static Lock {
+    static LOCK: OnceLock<Lock> = OnceLock::new();
+    LOCK.get_or_init(|| {
+        serde_json::from_str(include_str!("../models.lock.json")).expect("models.lock.json is valid")
+    })
+}
+
+/// The Hugging Face commit Booth's model files are pinned to.
+pub fn pinned_revision() -> &'static str {
+    &lock().revision
+}
 
 /// A group of files that is downloaded together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,85 +178,78 @@ pub struct RemoteFile {
     /// Path relative to the repo's `gguf/` folder, e.g. `voices/English/Imogen_en-British_F_1.wav`.
     pub rel: String,
     pub size: u64,
-    /// SHA-256 for LFS files (the big ones); small git files have none.
     pub sha256: Option<String>,
-    /// Where to fetch it; None = the file of that name in the Hugging Face repo.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    /// Where to get it, best first. Every source serves the same bytes.
+    pub sources: Vec<Source>,
 }
 
-#[derive(Deserialize)]
-struct TreeEntry {
-    #[serde(rename = "type")]
-    kind: String,
-    path: String,
-    size: u64,
-    lfs: Option<TreeLfs>,
+/// One place to download a file from: a single URL, or parts to join in order (the GitHub mirror
+/// splits files over its 2 GiB asset limit).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Source {
+    pub name: String,
+    pub parts: Vec<SourcePart>,
 }
 
-#[derive(Deserialize)]
-struct TreeLfs {
-    oid: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcePart {
+    pub url: String,
+    pub size: u64,
 }
 
-async fn tree(client: &reqwest::Client, dir: &str) -> Result<Vec<TreeEntry>> {
-    let url = format!(
-        "https://huggingface.co/api/models/{HF_REPO}/tree/{HF_REVISION}/gguf/{dir}?recursive=1"
-    );
-    let entries: Vec<TreeEntry> = client
-        .get(&url)
-        .send()
-        .await
-        .with_context(|| format!("listing {url}"))?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(entries)
-}
-
-/// The files of `pack` with their sizes and checksums, from the Hub.
-pub async fn plan(client: &reqwest::Client, pack: Pack) -> Result<Vec<RemoteFile>> {
+/// The files of `pack` with their sizes, checksums and sources, from the built-in lock (no network).
+///
+/// `BOOTH_MODEL_SOURCE=hf` or `=github` uses only that source; `BOOTH_HF_BASE` replaces
+/// `https://huggingface.co` (both are for testing the fallback).
+pub async fn plan(_client: &reqwest::Client, pack: Pack) -> Result<Vec<RemoteFile>> {
     if pack == Pack::GpuEngine {
         return Ok(vec![RemoteFile {
             rel: "booth-engine-cuda.zip".into(),
             size: CUDA_ENGINE_SIZE,
             sha256: Some(CUDA_ENGINE_SHA256.into()),
-            url: Some(CUDA_ENGINE_URL.into()),
+            sources: vec![Source {
+                name: "GitHub".into(),
+                parts: vec![SourcePart { url: CUDA_ENGINE_URL.into(), size: CUDA_ENGINE_SIZE }],
+            }],
         }]);
     }
-    let top = tree(client, "").await?;
-    let mut out = Vec::new();
-    for f in pack.files() {
-        if let Some(dir) = f.strip_suffix('/') {
-            for e in tree(client, dir).await? {
-                if e.kind == "file" {
-                    out.push(remote(e));
-                }
+    let lock = lock();
+    let key = match pack {
+        Pack::Core => "core",
+        Pack::Exact => "exact",
+        Pack::FullDecoder => "full_decoder",
+        Pack::GpuEngine => unreachable!(),
+    };
+    let files = lock.packs.get(key).with_context(|| format!("models.lock.json has no {key} pack"))?;
+    let only = std::env::var("BOOTH_MODEL_SOURCE").unwrap_or_default().to_ascii_lowercase();
+    let hf_base = std::env::var("BOOTH_HF_BASE").unwrap_or_else(|_| "https://huggingface.co".into());
+    Ok(files
+        .iter()
+        .map(|f| {
+            let mut sources = Vec::new();
+            if only != "github" {
+                let path = f.rel.split('/').map(urlencode).collect::<Vec<_>>().join("/");
+                sources.push(Source {
+                    name: "Hugging Face".into(),
+                    parts: vec![SourcePart {
+                        url: format!("{}/{}/resolve/{}/gguf/{path}", hf_base.trim_end_matches('/'), lock.repo, lock.revision),
+                        size: f.size,
+                    }],
+                });
             }
-        } else {
-            let want = format!("gguf/{f}");
-            let e = top
-                .iter()
-                .find(|e| e.path == want)
-                .with_context(|| format!("{want} is not in {HF_REPO}"))?;
-            out.push(RemoteFile {
-                rel: f.to_string(),
-                size: e.size,
-                sha256: e.lfs.as_ref().map(|l| l.oid.clone()),
-                url: None,
-            });
-        }
-    }
-    Ok(out)
-}
-
-fn remote(e: TreeEntry) -> RemoteFile {
-    RemoteFile {
-        rel: e.path.trim_start_matches("gguf/").to_string(),
-        size: e.size,
-        sha256: e.lfs.map(|l| l.oid),
-        url: None,
-    }
+            if only != "hf" {
+                sources.push(Source {
+                    name: "GitHub mirror".into(),
+                    parts: f
+                        .mirror
+                        .iter()
+                        .map(|p| SourcePart { url: format!("{}/{}", lock.mirror, p.name), size: p.size })
+                        .collect(),
+                });
+            }
+            RemoteFile { rel: f.rel.clone(), size: f.size, sha256: Some(f.sha256.clone()), sources }
+        })
+        .collect())
 }
 
 /// Progress of a pack download, reported after every chunk (throttle on the receiving side).
@@ -226,7 +262,7 @@ pub struct Progress {
 }
 
 /// Download `pack` into `models`, skipping files already complete, resuming `.part` files,
-/// and checking SHA-256 where the Hub gives one.
+/// and checking every file against its SHA-256.
 pub async fn download(
     client: &reqwest::Client,
     models: &Path,
@@ -270,54 +306,95 @@ async fn fetch_one(
         "{}.part",
         dest.extension().and_then(|e| e.to_str()).unwrap_or("")
     ));
-    let mut have = tokio::fs::metadata(&part).await.map(|m| m.len()).unwrap_or(0);
-    if have > f.size {
+    let size_of = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    if size_of(&part) > f.size {
         tokio::fs::remove_file(&part).await.ok();
-        have = 0;
     }
-    let url = f.url.clone().unwrap_or_else(|| {
-        format!(
-            "https://huggingface.co/{HF_REPO}/resolve/{HF_REVISION}/gguf/{}",
-            f.rel.split('/').map(urlencode).collect::<Vec<_>>().join("/")
-        )
-    });
-    if have < f.size {
-        let mut req = client.get(&url);
-        if have > 0 {
-            req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
-        }
-        let resp = req.send().await?.error_for_status()?;
-        if have > 0 && resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-            have = 0; // the server ignored the range: start over
-        }
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(have > 0)
-            .truncate(have == 0)
-            .open(&part)
-            .await?;
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
-            have += chunk.len() as u64;
-            on_bytes(have);
-        }
-        file.flush().await?;
+    if f.sources.is_empty() {
+        bail!("no download source is enabled");
     }
-    if have != f.size {
-        bail!("got {have} of {} bytes", f.size);
-    }
-    if let Some(want) = &f.sha256 {
-        let got = sha256_file(&part).await?;
-        if &got != want {
-            tokio::fs::remove_file(&part).await.ok();
-            bail!("checksum mismatch (expected {want}, got {got}); the partial file was removed, try again");
+    // Each source gets two tries; a break on one resumes from the bytes already on disk.
+    let mut errors = Vec::new();
+    for src in f.sources.iter().chain(f.sources.iter()) {
+        if size_of(&part) < f.size {
+            if let Err(e) = fetch_from(client, src, &part, f.size, &mut on_bytes).await {
+                errors.push(format!("{}: {e:#}", src.name));
+                continue;
+            }
         }
+        if let Some(want) = &f.sha256 {
+            let got = sha256_file(&part).await?;
+            if &got != want {
+                tokio::fs::remove_file(&part).await.ok();
+                errors.push(format!("{}: the file did not match its checksum", src.name));
+                continue;
+            }
+        }
+        tokio::fs::rename(&part, dest).await?;
+        return Ok(());
     }
-    tokio::fs::rename(&part, dest).await?;
-    Ok(())
+    errors.dedup();
+    bail!("{}", errors.join("; "))
+}
+
+/// Append the rest of the file to `part` from one source, resuming at its current length.
+async fn fetch_from(
+    client: &reqwest::Client,
+    src: &Source,
+    part: &Path,
+    size: u64,
+    on_bytes: &mut impl FnMut(u64),
+) -> Result<()> {
+    let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(part).await?;
+    let mut have = file.metadata().await?.len();
+    let result = async {
+        let mut start = 0u64;
+        for seg in &src.parts {
+            let end = start + seg.size;
+            if have < end {
+                let offset = have - start;
+                let mut req = client.get(&seg.url);
+                if offset > 0 {
+                    req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+                }
+                let resp = tokio::time::timeout(STALL, req.send())
+                    .await
+                    .map_err(|_| anyhow!("no answer in {}s", STALL.as_secs()))??
+                    .error_for_status()?;
+                if offset > 0 && resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+                    if start > 0 {
+                        bail!("the server can't resume a download");
+                    }
+                    file.set_len(0).await?; // the server ignored the range: start over
+                    have = 0;
+                }
+                let mut stream = resp.bytes_stream();
+                while let Some(chunk) = tokio::time::timeout(STALL, stream.next())
+                    .await
+                    .map_err(|_| anyhow!("the download stalled for {}s", STALL.as_secs()))?
+                {
+                    let chunk = chunk?;
+                    if have + chunk.len() as u64 > end {
+                        bail!("the server sent more bytes than expected");
+                    }
+                    file.write_all(&chunk).await?;
+                    have += chunk.len() as u64;
+                    on_bytes(have);
+                }
+                if have != end {
+                    bail!("the connection closed at {have} of {size} bytes");
+                }
+            }
+            start = end;
+        }
+        if have != size {
+            bail!("got {have} of {size} bytes");
+        }
+        Ok(())
+    }
+    .await;
+    file.flush().await?;
+    result
 }
 
 /// Download the CUDA engine zip (resumable, checksummed) and unpack it into `cuda_engine_dir()`.

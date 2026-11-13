@@ -63,6 +63,18 @@ for NVIDIA cards. `scripts/patch-zonos3.py` holds the small source patches, and
 `.github/workflows/release.yml` shows the exact builds. Pushing a `v*` tag builds every platform and
 attaches the installers and the updater's `latest.json` to that release.
 
+### Model files
+
+Booth downloads the model from Hugging Face at one pinned commit, listed with every file's size and
+SHA-256 in `crates/booth-core/models.lock.json`. The same files are mirrored on a GitHub release
+(`models-<commit>`). If Hugging Face fails, Booth continues from the mirror, and a download cut off on
+one resumes on the other. Every file must match its SHA-256.
+
+- `node scripts/models-lock.mjs` pins today's Hugging Face main (`--check` compares without writing).
+- Committing a new lock runs **Mirror the model files**, which copies that commit to GitHub.
+- **Watch ZONOS3-Mini upstream** runs daily and opens an `upstream` issue when Zyphra changes the
+  model files or the engine source that Booth pins.
+
 | Folder              | What                                                     |
 | ------------------- | -------------------------------------------------------- |
 | `apps/native`       | The Tauri app                                            |
