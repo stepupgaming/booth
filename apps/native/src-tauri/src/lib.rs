@@ -161,7 +161,7 @@ struct PackInfo {
 /// Each pack with its download size from the Hub (a fixed estimate when offline).
 #[tauri::command]
 async fn pack_info() -> Res<Vec<PackInfo>> {
-    let client = reqwest::Client::new();
+    let client = booth_core::http_client();
     let models_dir = paths::models_dir();
     let mut out = Vec::new();
     for pack in Pack::ALL.iter().copied() {
@@ -207,7 +207,7 @@ async fn download_packs(app: AppHandle, packs: Vec<Pack>) -> Res<()> {
         return Err("a download is already running".into());
     }
     let result = async {
-        let client = reqwest::Client::new();
+        let client = booth_core::http_client();
         let models_dir = paths::models_dir();
         paths::ensure_dir(&models_dir).map_err(err)?;
         let count = packs.len();
@@ -602,6 +602,7 @@ struct UpdateInfo {
 
 /// The updater, pointed at `BOOTH_UPDATE_URL` when that is set (to test a release before it is
 /// "latest").
+#[cfg(desktop)]
 fn updater(app: &AppHandle) -> Res<tauri_plugin_updater::Updater> {
     use tauri_plugin_updater::UpdaterExt;
     let mut b = app.updater_builder();
@@ -614,8 +615,16 @@ fn updater(app: &AppHandle) -> Res<tauri_plugin_updater::Updater> {
 /// A newer Booth on GitHub Releases, or None.
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Res<Option<UpdateInfo>> {
-    let update = updater(&app)?.check().await.map_err(err)?;
-    Ok(update.map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone() }))
+    #[cfg(desktop)]
+    {
+        let update = updater(&app)?.check().await.map_err(err)?;
+        Ok(update.map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone() }))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        Ok(None)
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -626,6 +635,13 @@ struct UpdateProgress {
 
 /// Download the update (checked against Booth's signing key), stop the engine once it is idle so
 /// its files can be replaced, install, and restart.
+#[cfg(mobile)]
+#[tauri::command]
+async fn install_update(_app: AppHandle) -> Res<()> {
+    Err("updates come from a new APK on phones".into())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Res<()> {
     let update = updater(&app)?.check().await.map_err(err)?.ok_or("Booth is already up to date")?;
@@ -684,12 +700,35 @@ fn allow_media(app: &AppHandle) {
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
+/// Android: Booth's folder is the app's own storage (there is no `%LOCALAPPDATA%`), and the
+/// engine's LACI heads, built into the app, are unpacked next to it. The engine program itself
+/// ships in the native library folder (`paths::server_exe`).
+#[cfg(target_os = "android")]
+fn android_setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    static LACI_HEADS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/android-engine/laci_heads");
+    if std::env::var_os("BOOTH_HOME").is_none() {
+        std::env::set_var("BOOTH_HOME", app.path().app_local_data_dir()?);
+    }
+    let heads = paths::home().join("engine").join("laci_heads");
+    paths::ensure_dir(&heads)?;
+    for f in LACI_HEADS.files() {
+        let dest = heads.join(f.path());
+        if std::fs::read(&dest).ok().as_deref() != Some(f.contents()) {
+            std::fs::write(&dest, f.contents())?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            android_setup(app.handle())?;
             allow_media(app.handle());
             // So booth-mcp, installed in Claude's own folder, finds the engine that shipped here.
             if let Ok(dir) = app.path().resource_dir() {
@@ -702,7 +741,7 @@ pub fn run() {
             // A Booth update moved to a newer NVIDIA engine: fetch it quietly, keep the old one meanwhile.
             if models::cuda_engine_outdated() && !DOWNLOADING.swap(true, Ordering::SeqCst) {
                 tauri::async_runtime::spawn(async {
-                    let _ = models::upgrade_cuda_engine(&reqwest::Client::new()).await;
+                    let _ = models::upgrade_cuda_engine(&booth_core::http_client()).await;
                     DOWNLOADING.store(false, Ordering::SeqCst);
                 });
             } else {

@@ -77,6 +77,12 @@ pub fn bundled_engine_dir() -> Option<PathBuf> {
     if let Some(dir) = env_dir("BOOTH_ENGINE_DIR") {
         return Some(dir);
     }
+    if cfg!(target_os = "android") {
+        // The program is in the app's native library folder (see `server_exe`); its data files
+        // (LACI heads) are unpacked by the app into `<home>/engine`.
+        let dir = home().join("engine");
+        return server_exe(&dir).is_file().then_some(dir);
+    }
     let mut bases = Vec::new();
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
         bases.push(dir.join("..").join("Resources")); // Booth.app/Contents/MacOS -> Resources
@@ -87,7 +93,39 @@ pub fn bundled_engine_dir() -> Option<PathBuf> {
     bases
         .iter()
         .flat_map(|b| BUNDLED_ENGINE_NAMES.iter().map(move |n| b.join(n)))
-        .find(|d| d.join(SERVER_EXE).is_file())
+        .find(|d| server_exe(d).is_file())
+}
+
+/// The engine program for an engine folder. On Android it ships in the app's native library
+/// folder as `libzonos3server.so`, the only place an Android app may run a program from.
+pub fn server_exe(engine: &Path) -> PathBuf {
+    #[cfg(target_os = "android")]
+    if let Some(dir) = native_lib_dir() {
+        return dir.join("libzonos3server.so");
+    }
+    engine.join(SERVER_EXE)
+}
+
+/// What the engine decodes cloning clips with (it runs `ffmpeg`, or `ZONOS3_FFMPEG` when set):
+/// an ffmpeg next to the engine, or on Android, where there is none, Booth's `booth-decode`.
+pub fn audio_decoder(engine: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "android")]
+    if let Some(dir) = native_lib_dir() {
+        return Some(dir.join("libboothdecode.so")).filter(|p| p.is_file());
+    }
+    Some(engine.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })).filter(|p| p.is_file())
+}
+
+/// Android: the app's native library folder (`nativeLibraryDir`), found from where the app's own
+/// library is loaded. The libraries must be extracted on install (`useLegacyPackaging`), or they
+/// stay inside the APK and can't be run.
+#[cfg(target_os = "android")]
+pub fn native_lib_dir() -> Option<PathBuf> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    maps.lines()
+        .filter_map(|l| l.split_whitespace().nth(5))
+        .find(|p| p.ends_with("/libbooth_lib.so") && !p.contains('!'))
+        .and_then(|p| Path::new(p).parent().map(Path::to_path_buf))
 }
 
 /// Where the downloadable NVIDIA (CUDA) engine is unpacked.

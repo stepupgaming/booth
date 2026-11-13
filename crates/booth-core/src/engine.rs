@@ -189,7 +189,7 @@ fn free_port() -> u16 {
 
 /// The command line for the server, from what is on disk.
 pub fn command_line(engine: &Path, accel: Accel, models: &Path, port: u16) -> Result<(PathBuf, Vec<String>, Vec<Pack>)> {
-    let exe = engine.join(paths::SERVER_EXE);
+    let exe = paths::server_exe(engine);
     if !exe.is_file() {
         bail!("the voice engine isn't installed ({} is missing)", exe.display());
     }
@@ -327,9 +327,8 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
         .stdout(log.try_clone()?)
         .stderr(log)
         .kill_on_drop(false);
-    let ffmpeg = engine.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
-    if ffmpeg.is_file() {
-        cmd.env("ZONOS3_FFMPEG", &ffmpeg);
+    if let Some(decoder) = paths::audio_decoder(&engine) {
+        cmd.env("ZONOS3_FFMPEG", &decoder);
     }
     #[cfg(windows)]
     {

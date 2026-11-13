@@ -1,0 +1,10 @@
+[package]
+name = "booth-decode"
+description = "Booth's stand-in for ffmpeg where there is none (Android): decodes a clip to mono 32-bit float at the rate the engine asks for"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "aac", "alac", "isomp4", "flac", "ogg", "vorbis", "mkv", "aiff", "caf"] }

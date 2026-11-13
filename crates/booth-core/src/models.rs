@@ -164,8 +164,12 @@ impl Pack {
     /// bundled Metal engine and Linux the bundled CPU engine.
     #[cfg(windows)]
     pub const ALL: &'static [Pack] = &[Pack::Core, Pack::GpuEngine, Pack::Exact, Pack::FullDecoder];
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "android")))]
     pub const ALL: &'static [Pack] = &[Pack::Core, Pack::Exact, Pack::FullDecoder];
+    /// Phones get the Core pack only: High-fidelity's encoders (5.6 GB) and the Studio decoder
+    /// don't fit a phone's memory next to the model.
+    #[cfg(target_os = "android")]
+    pub const ALL: &'static [Pack] = &[Pack::Core];
 
     /// Files of the pack, relative to the repo's `gguf/` folder. A trailing `/` is a folder.
     pub fn files(self) -> &'static [&'static str] {
@@ -331,7 +335,7 @@ const SMALL: u64 = 50_000_000;
 /// differs is fetched again (Booth's rebuilt `steer.gguf`, for one). Large files are left to the
 /// pack downloads. Best effort with a short timeout: offline, the engine starts on what is there.
 pub async fn refresh_small_files(models: &Path) {
-    let client = match reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).build() {
+    let client = match crate::http().connect_timeout(Duration::from_secs(5)).build() {
         Ok(c) => c,
         Err(_) => return,
     };

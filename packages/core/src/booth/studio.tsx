@@ -363,7 +363,7 @@ export function Studio() {
                   }}
                   value={l.text}
                 />
-                <span className="muted small" style={{ whiteSpace: "nowrap" }}>
+                <span className="muted small wide-only" style={{ whiteSpace: "nowrap" }}>
                   {status}
                 </span>
                 <button

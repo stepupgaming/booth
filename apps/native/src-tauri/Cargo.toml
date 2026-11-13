@@ -26,7 +26,15 @@ base64 = "0.22"
 sysinfo = { version = "0.37", default-features = false, features = ["disk", "system"] }
 tauri = { version = "2", features = ["devtools", "protocol-asset"] }
 tauri-plugin-opener = "2"
+
+# Phones update through the store or a new APK, not Tauri's updater.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The engine's LACI heads, built into the app and unpacked on start (scripts/build-android-engine.sh
+# puts them in android-engine/).
+include_dir = "0.7"
 
 [features]
 # by default Tauri runs in production mode

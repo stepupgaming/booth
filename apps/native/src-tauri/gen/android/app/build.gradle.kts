@@ -79,6 +79,13 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // The voice engine and the clip decoder ship as lib*.so programs and are run from the native
+    // library folder, so the libraries must be extracted on install, not kept inside the APK.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 rust {

@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let pack: Pack = serde_json::from_value(serde_json::Value::String(args.next().unwrap_or("core".into())))?;
     let dir = std::path::PathBuf::from(args.next().expect("give a folder"));
     std::fs::create_dir_all(&dir)?;
-    let client = reqwest::Client::new();
+    let client = booth_core::http_client();
     let t = Instant::now();
     let mut last = Instant::now();
     models::download(&client, &dir, pack, |p| {

@@ -83,7 +83,7 @@ pub struct Speaker {
 
 impl Zonos {
     pub fn new(base: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::http()
             .connect_timeout(Duration::from_secs(3))
             .build()
             .expect("http client");

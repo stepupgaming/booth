@@ -715,3 +715,34 @@ pre.code {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* phones: the side nav becomes a tab bar along the bottom */
+@media (max-width: 640px) {
+  .b-shell {
+    flex-direction: column-reverse;
+    gap: 10px;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+    height: 100dvh;
+  }
+  .b-nav {
+    width: auto;
+    flex-direction: row;
+    padding: 6px;
+    gap: 2px;
+    border-radius: 18px;
+  }
+  .b-nav > :not(button),
+  .wide-only {
+    display: none;
+  }
+  .b-nav button {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 7px 2px;
+    font-size: 11px;
+    text-align: center;
+    white-space: nowrap;
+  }
+}
