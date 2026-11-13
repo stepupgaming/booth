@@ -15,6 +15,13 @@ const MIRROR_REPO = "stepupgaming/booth";
 const PART_SIZE = 2_000_000_000; // under GitHub's 2 GiB per-asset limit
 const LOCK = new URL("../crates/booth-core/models.lock.json", import.meta.url);
 
+// Files Booth builds itself from Zyphra's GitHub source because Hugging Face doesn't have the new
+// build yet (see models/README.md). They are served only from the mirror release. The Hugging Face
+// file they replace is recorded as hf_sha256, so --check notices when Zyphra uploads a new one.
+const OVERRIDES = {
+  "steer.gguf": { local: "models/steer.gguf", name: "steer-zonos3-bcb6661.gguf" },
+};
+
 // Paths under gguf/. A trailing slash takes the whole folder.
 const PACKS = {
   core: ["backbone-ptq.gguf", "zac-keep2.gguf", "spk-encoder.gguf", "steer.gguf", "voices/"],
@@ -59,6 +66,23 @@ async function build(revision) {
           if (body.length !== e.size) throw new Error(`${rel}: got ${body.length} of ${e.size} bytes`);
           sha256 = createHash("sha256").update(body).digest("hex");
         }
+        const own = OVERRIDES[rel];
+        if (own) {
+          const body = readFileSync(new URL(`../${own.local}`, import.meta.url));
+          const size = body.length;
+          if (size > PART_SIZE) throw new Error(`${own.local} is too big for one mirror asset`);
+          packs[pack].push({
+            rel,
+            size,
+            sha256: createHash("sha256").update(body).digest("hex"),
+            mirror: [{ name: own.name, size }],
+            hf: false,
+            local: own.local,
+            hf_size: e.size,
+            hf_sha256: sha256,
+          });
+          continue;
+        }
         const name = assetName(rel);
         const parts = [];
         if (e.size <= PART_SIZE) parts.push({ name, size: e.size });
@@ -81,14 +105,20 @@ const arg = process.argv[2];
 if (arg === "--check") {
   const lock = JSON.parse(readFileSync(LOCK, "utf8"));
   const main = await build("main");
-  const key = (f) => `${f.size} ${f.sha256}`;
+  // For Booth's own builds, compare the Hugging Face file they replaced.
+  const key = (f) => (f.hf === false ? `${f.hf_size} ${f.hf_sha256}` : `${f.size} ${f.sha256}`);
   const changes = [];
   for (const pack of Object.keys(PACKS)) {
     const was = new Map(lock.packs[pack].map((f) => [f.rel, f]));
     const now = new Map(main.packs[pack].map((f) => [f.rel, f]));
     for (const [rel, f] of now)
       if (!was.has(rel)) changes.push(`+ ${pack}: ${rel} (new, ${f.size} bytes)`);
-      else if (key(was.get(rel)) !== key(f)) changes.push(`~ ${pack}: ${rel} (changed, ${was.get(rel).size} → ${f.size} bytes)`);
+      else if (key(was.get(rel)) !== key(f))
+        changes.push(
+          was.get(rel).hf === false
+            ? `~ ${pack}: ${rel} (Hugging Face has a new build: try it and drop Booth's override in models/)`
+            : `~ ${pack}: ${rel} (changed, ${was.get(rel).size} → ${f.size} bytes)`,
+        );
     for (const rel of was.keys()) if (!now.has(rel)) changes.push(`- ${pack}: ${rel} (removed or renamed)`);
   }
   console.log(`Pinned: ${lock.revision}\nHugging Face main: ${main.revision}`);

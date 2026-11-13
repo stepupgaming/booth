@@ -39,14 +39,18 @@
       },
       {
         "rel": "steer.gguf",
-        "size": 204960,
-        "sha256": "6e8e3f86e89a09801ce083b9286f43263ec696acfaff72e25aca537aa9efa90c",
+        "size": 205120,
+        "sha256": "23b9684b971068cf333294e37e1a5f754d1cfcc3301dd46b466f360e6cfbb788",
         "mirror": [
           {
-            "name": "steer.gguf",
-            "size": 204960
+            "name": "steer-zonos3-bcb6661.gguf",
+            "size": 205120
           }
-        ]
+        ],
+        "hf": false,
+        "local": "models/steer.gguf",
+        "hf_size": 204960,
+        "hf_sha256": "6e8e3f86e89a09801ce083b9286f43263ec696acfaff72e25aca537aa9efa90c"
       },
       {
         "rel": "voices/English/Cillian_en-Irish_M_1.codes.npy",

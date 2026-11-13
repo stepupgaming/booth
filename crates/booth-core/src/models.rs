@@ -38,6 +38,13 @@ struct LockFile {
     sha256: String,
     /// The file's copy on the mirror: one asset, or parts to join in order.
     mirror: Vec<LockPart>,
+    /// False for files Booth builds itself (see `models/README.md`): those exist only on the mirror.
+    #[serde(default = "yes")]
+    hf: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -227,7 +234,7 @@ pub async fn plan(_client: &reqwest::Client, pack: Pack) -> Result<Vec<RemoteFil
         .iter()
         .map(|f| {
             let mut sources = Vec::new();
-            if only != "github" {
+            if only != "github" && f.hf {
                 let path = f.rel.split('/').map(urlencode).collect::<Vec<_>>().join("/");
                 sources.push(Source {
                     name: "Hugging Face".into(),
@@ -259,6 +266,36 @@ pub struct Progress {
     pub file: String,
     pub done_bytes: u64,
     pub total_bytes: u64,
+}
+
+/// Files up to this size are re-checked before every engine start.
+const SMALL: u64 = 50_000_000;
+
+/// Bring small model files up to date with the lock: a file of an installed pack whose size on disk
+/// differs is fetched again (Booth's rebuilt `steer.gguf`, for one). Large files are left to the
+/// pack downloads. Best effort with a short timeout: offline, the engine starts on what is there.
+pub async fn refresh_small_files(models: &Path) {
+    let client = match reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).build() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let work = async {
+        for pack in [Pack::Core, Pack::Exact, Pack::FullDecoder] {
+            if !pack_present(models, pack) {
+                continue;
+            }
+            let Ok(files) = plan(&client, pack).await else { continue };
+            for f in files.iter().filter(|f| f.size <= SMALL) {
+                let dest = models.join(f.rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+                let have = dest.metadata().map(|m| m.len()).ok();
+                // Missing files are the pack download's job; only replace ones that changed.
+                if have.is_some_and(|n| n != f.size) {
+                    let _ = fetch_one(&client, f, &dest, &mut Vec::new(), |_| {}).await;
+                }
+            }
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(20), work).await;
 }
 
 /// Download `pack` into `models`, skipping files already complete, resuming `.part` files,

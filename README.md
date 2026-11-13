@@ -71,6 +71,8 @@ SHA-256 in `crates/booth-core/models.lock.json`. The same files are mirrored on 
 one resumes on the other. Every file must match its SHA-256.
 
 - `node scripts/models-lock.mjs` pins today's Hugging Face main (`--check` compares without writing).
+- `models/` holds files Booth builds from Zyphra's GitHub source when Hugging Face lags behind (now
+  `steer.gguf`). They are served from the mirror only; `models/README.md` says how each was made.
 - Committing a new lock runs **Mirror the model files**, which copies that commit to GitHub.
 - **Watch ZONOS3-Mini upstream** runs daily and opens an `upstream` issue when Zyphra changes the
   model files or the engine source that Booth pins.

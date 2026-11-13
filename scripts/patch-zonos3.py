@@ -2,7 +2,8 @@
 
     python scripts/patch-zonos3.py <zonos3 checkout> [--msvc] [--backend-dl]
 
---msvc        MSVC rejects a nested struct that shares its name with a member (C2380).
+--msvc        MSVC rejects a nested struct that shares its name with a member (C2380). Fixed
+              upstream in 43bac93 (probe_head); skipped when the source already has it.
 --backend-dl  For GGML_BACKEND_DL builds (the portable CPU engines for Windows and Linux): the CPU
               backend becomes a plugin library, so main() has to load the backends, and the one CPU
               helper the encoders call directly is forwarded through the backend registry.
@@ -21,12 +22,10 @@ def main() -> None:
     if "--msvc" in args:
         h = ggml / "src" / "zonos3.h"
         t = h.read_text(encoding="utf-8")
-        t, n1 = re.subn(r"struct head \{ int layer = 0, head = 0; \};", "struct probe_head { int layer = 0, head = 0; };", t)
-        t, n2 = re.subn(r"std::vector<head> heads;", "std::vector<probe_head> heads;", t)
-        if n1 != 1 or n2 != 1:
-            sys.exit(f"msvc patch: expected one match each, got {n1} and {n2}")
-        h.write_text(t, encoding="utf-8", newline="\n")
-        print("patched", h)
+        if "struct probe_head" in t:
+            print("msvc patch: already fixed upstream")
+        else:
+            patch_msvc(h, t)
 
     if "--backend-dl" in args:
         m = ggml / "src" / "server" / "main.cpp"
@@ -49,6 +48,15 @@ def main() -> None:
         t = t.replace(head, shim + head + load)
         m.write_text(t, encoding="utf-8", newline="\n")
         print("patched", m)
+
+
+def patch_msvc(h: pathlib.Path, t: str) -> None:
+    t, n1 = re.subn(r"struct head \{ int layer = 0, head = 0; \};", "struct probe_head { int layer = 0, head = 0; };", t)
+    t, n2 = re.subn(r"std::vector<head> heads;", "std::vector<probe_head> heads;", t)
+    if n1 != 1 or n2 != 1:
+        sys.exit(f"msvc patch: expected one match each, got {n1} and {n2}")
+    h.write_text(t, encoding="utf-8", newline="\n")
+    print("patched", h)
 
 
 if __name__ == "__main__":

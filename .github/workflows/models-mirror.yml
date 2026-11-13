@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [crates/booth-core/models.lock.json]
+    paths: [crates/booth-core/models.lock.json, "models/**"]
 
 permissions:
   contents: write
@@ -40,6 +40,10 @@ jobs:
           Copyright Zyphra Technologies. Booth uses them as a fallback when Hugging Face can't be
           reached; get them from Hugging Face if you want them for anything else.
 
+          Files whose names end in -zonos3-<commit>.gguf are not on Hugging Face: Booth builds them from
+          Zyphra's ZONOS3-Mini GitHub repo at that commit with its tools/convert_gguf.py, because the
+          Hugging Face copy predates a change the engine needs (see models/README.md in Booth's repo).
+
           Files larger than 2 GB are split into .part1, .part2, ...; join them in order to get the
           original file. Each file's SHA-256 is in Booth's models.lock.json.
           EOF
@@ -64,9 +68,15 @@ jobs:
             done < <(jq -r '.mirror[] | "\(.name) \(.size)"' <<<"$f")
             [ "$missing" = 1 ] || { echo "have  $rel"; continue; }
 
-            echo "fetch $rel ($size bytes)"
-            url="https://huggingface.co/$repo/resolve/$rev/gguf/$(jq -rn --arg r "$rel" '$r | split("/") | map(@uri) | join("/")')"
-            curl -fsSL --retry 5 --retry-all-errors -o work/file "$url" </dev/null
+            local=$(jq -r 'if .hf == false then .local else "" end' <<<"$f")
+            if [ -n "$local" ]; then
+              echo "copy  $rel from $local ($size bytes)"
+              cp "$local" work/file
+            else
+              echo "fetch $rel ($size bytes)"
+              url="https://huggingface.co/$repo/resolve/$rev/gguf/$(jq -rn --arg r "$rel" '$r | split("/") | map(@uri) | join("/")')"
+              curl -fsSL --retry 5 --retry-all-errors -o work/file "$url" </dev/null
+            fi
             echo "$sha  work/file" | sha256sum -c --quiet
             [ "$(stat -c %s work/file)" = "$size" ]
 

@@ -240,6 +240,7 @@ pub fn command_line(engine: &Path, accel: Accel, models: &Path, port: u16) -> Re
 /// Start the best engine for the current setting. If the NVIDIA engine can't start (no driver,
 /// an old card), fall back to the processor rather than leave Booth without a voice.
 pub async fn start(who: &str) -> Result<Zonos> {
+    crate::models::refresh_small_files(&paths::models_dir()).await;
     let list = choices(settings::load().device);
     if list.is_empty() {
         bail!("the voice engine isn't installed ({} is missing); reinstalling Booth puts it back", paths::engine_dir().display());
