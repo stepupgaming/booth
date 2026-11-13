@@ -100,7 +100,8 @@ fn older_cuda_engines() -> Vec<PathBuf> {
         .map(|e| e.path())
         .filter(|d| {
             let name = d.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            name.starts_with("cuda-") && !name.contains('.') && name != CUDA_ENGINE_ID
+            // Ids contain a dot ("cuda-b171b19-12.8"), so only the unpacking suffix marks a partial one.
+            name.starts_with("cuda-") && !name.ends_with(".unpacking") && name != CUDA_ENGINE_ID
         })
         .collect();
     // Newest first. Callers that run one check it still has the server in it.
@@ -145,6 +146,16 @@ pub async fn remove_older_cuda_engines() {
     }
     for d in older_cuda_engines() {
         let _ = tokio::fs::remove_dir_all(&d).await;
+    }
+    // Half-unpacked folders of older versions, left by a download that was cut off.
+    let current = format!("{CUDA_ENGINE_ID}.unpacking");
+    if let Ok(rd) = std::fs::read_dir(crate::paths::engines_dir()) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("cuda-") && name.ends_with(".unpacking") && name != current {
+                let _ = tokio::fs::remove_dir_all(e.path()).await;
+            }
+        }
     }
 }
 
