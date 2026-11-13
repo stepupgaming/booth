@@ -35,6 +35,9 @@ tauri-plugin-updater = "2"
 # The engine's LACI heads, built into the app and unpacked on start (scripts/build-android-engine.sh
 # puts them in android-engine/).
 include_dir = "0.7"
+# Starting RenderService (the "Generating speech" notification) from Rust. The same versions tao uses.
+jni = "0.21"
+ndk-context = "0.1"
 
 [features]
 # by default Tauri runs in production mode

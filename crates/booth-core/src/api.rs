@@ -101,6 +101,54 @@ impl Zonos {
         )
     }
 
+    /// Run a request, but give up once the engine is gone: if it died (on Android, the system
+    /// kills it in the background) the request would otherwise sit until its timeout and Booth
+    /// would look frozen. Health answers while a take renders, but slowly on a busy phone, so a
+    /// refused connection (nothing listening) ends the request fast and slow answers only after
+    /// about two minutes of them.
+    async fn watched<T>(&self, work: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+        const EVERY: Duration = Duration::from_secs(5);
+        const GONE: u32 = 2;
+        const SILENT: u32 = 12;
+        let watch = async {
+            let (mut gone, mut silent) = (0, 0);
+            loop {
+                tokio::time::sleep(EVERY).await;
+                match self.http.get(self.url("/v2/health")).timeout(Duration::from_secs(5)).send().await {
+                    Ok(r) if r.status().is_success() => (gone, silent) = (0, 0),
+                    Err(e) if e.is_connect() => {
+                        gone += 1;
+                        crate::diag::note(format!("engine: refused a health check during a request ({gone}/{GONE})"));
+                    }
+                    _ => {
+                        silent += 1;
+                        crate::diag::note(format!("engine: slow to answer a health check during a request ({silent}/{SILENT})"));
+                    }
+                }
+                if gone >= GONE || silent >= SILENT {
+                    return;
+                }
+            }
+        };
+        let stopped = || {
+            anyhow::anyhow!(
+                "the voice engine stopped in the middle of this take{}. Generate again and Booth starts it fresh",
+                if cfg!(target_os = "android") { " (Android may have closed it while Booth was in the background)" } else { "" }
+            )
+        };
+        tokio::select! {
+            r = work => match r {
+                // A dropped connection to an engine that no longer answers: say that, not the HTTP error.
+                Err(e) if !self.health().await => {
+                    crate::diag::note(format!("engine: gone after a failed request ({e:#})"));
+                    Err(stopped())
+                }
+                r => r,
+            },
+            () = watch => Err(stopped()),
+        }
+    }
+
     async fn get_json(&self, path: &str) -> Result<Value> {
         let r = self.http.get(self.url(path)).send().await.with_context(|| format!("GET {path}"))?;
         let status = r.status();
@@ -205,11 +253,12 @@ impl Zonos {
         let t0 = std::time::Instant::now();
         crate::diag::note(format!("embed clip ({} KB): sent", audio.len() / 1024));
         let session = format!("booth-{}", uuid::Uuid::new_v4());
-        let r = async {
-            let sp = self.add_speaker(&session, name, audio, name).await?;
-            self.embedding_npy(&sp.id, Some(&session)).await
-        }
-        .await;
+        let r = self
+            .watched(async {
+                let sp = self.add_speaker(&session, name, audio, name).await?;
+                self.embedding_npy(&sp.id, Some(&session)).await
+            })
+            .await;
         let secs = t0.elapsed().as_secs_f64();
         match &r {
             Ok(_) => crate::diag::note(format!("embed clip: ok in {secs:.1} s")),
@@ -233,7 +282,7 @@ impl Zonos {
             }
         );
         crate::diag::note(format!("{what}: sent"));
-        let r = self.generate_inner(req).await;
+        let r = self.watched(self.generate_inner(req)).await;
         let secs = t0.elapsed().as_secs_f64();
         match &r {
             Ok(a) => crate::diag::note(format!(

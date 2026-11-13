@@ -138,6 +138,7 @@ pub async fn ensure(who: &str) -> Result<Zonos> {
     if let Some((_, z)) = running().await {
         return Ok(z);
     }
+    let _work = Working::new();
     let _guard = STARTING.lock().await;
     if let Some((_, z)) = running().await {
         return Ok(z);
@@ -174,12 +175,22 @@ pub async fn ensure(who: &str) -> Result<Zonos> {
         None => {
             match read_lock() {
                 None => crate::diag::note(format!("engine: not running, starting it for {who}")),
-                Some(l) => crate::diag::note(format!(
-                    "engine: pid {} on port {} doesn't answer ({}), starting a new one for {who}",
-                    l.pid,
-                    l.port,
-                    if crate::diag::pid_alive(l.pid) { "process still there" } else { "process is gone" }
-                )),
+                Some(l) => {
+                    let alive = crate::diag::pid_alive(l.pid);
+                    crate::diag::note(format!(
+                        "engine: pid {} on port {} doesn't answer ({}), starting a new one for {who}",
+                        l.pid,
+                        l.port,
+                        if alive { "process still there" } else { "process is gone" }
+                    ));
+                    // A phone has room for one engine, and there's no GPU work to cut off: end a
+                    // hung one (left frozen by the system) rather than load a second next to it.
+                    #[cfg(target_os = "android")]
+                    if alive {
+                        let _ = std::process::Command::new("kill").arg("-9").arg(l.pid.to_string()).status();
+                        crate::diag::note(format!("engine: ended the hung pid {}", l.pid));
+                    }
+                }
             }
             let r = start(who).await;
             if let Err(e) = &r {
@@ -379,7 +390,12 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
     loop {
         if z.health().await {
             crate::diag::note(format!("engine: ready, pid {pid}, in {:.1} s", t0.elapsed().as_secs_f64()));
-            // Detach: the engine outlives this process on purpose.
+            // Detach: the engine outlives this process on purpose. On Unix, dropping tokio's
+            // handle (kill_on_drop is off) leaves it running and lets tokio reap it once it exits,
+            // so an engine Android killed doesn't linger as a zombie while Booth is open.
+            #[cfg(unix)]
+            drop(child);
+            #[cfg(not(unix))]
             std::mem::forget(child);
             return Ok(z);
         }
@@ -398,7 +414,7 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
 
 /// Marks a request in flight on the engine. `stop()` waits until none are left, because killing a
 /// process in the middle of CUDA work can hang the GPU driver (it has crashed this kind of machine).
-pub struct BusyGuard(PathBuf);
+pub struct BusyGuard(PathBuf, #[allow(dead_code)] Working);
 
 impl BusyGuard {
     pub fn new() -> Self {
@@ -406,7 +422,52 @@ impl BusyGuard {
         let _ = std::fs::create_dir_all(&dir);
         let p = dir.join(format!("{}-{}", std::process::id(), uuid::Uuid::new_v4()));
         let _ = std::fs::write(&p, b"");
-        Self(p)
+        Self(p, Working::new())
+    }
+}
+
+static WORKING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static ON_WORK: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>> = std::sync::OnceLock::new();
+
+/// Called with `true` when this process starts working the engine (loading it or a request on
+/// it) and `false` when the last such piece of work ends. Android uses it to keep a foreground
+/// service up meanwhile, so the system doesn't freeze or kill the engine mid-take.
+pub fn on_work(f: impl Fn(bool) + Send + Sync + 'static) {
+    let _ = ON_WORK.set(Box::new(f));
+}
+
+/// How many pieces of engine work this process has going right now.
+pub fn working() -> usize {
+    WORKING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// One piece of engine work in this process, for `on_work`.
+pub struct Working(());
+
+impl Working {
+    pub fn new() -> Self {
+        if WORKING.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            if let Some(f) = ON_WORK.get() {
+                f(true);
+            }
+        }
+        Self(())
+    }
+}
+
+impl Default for Working {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for Working {
+    fn drop(&mut self) {
+        if WORKING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            if let Some(f) = ON_WORK.get() {
+                f(false);
+            }
+        }
     }
 }
 

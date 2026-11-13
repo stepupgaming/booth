@@ -733,6 +733,68 @@ fn android_setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Android: keep RenderService (a foreground service with a notification) up while the engine
+/// loads or renders, so the system doesn't freeze Booth or kill the engine when you switch apps.
+/// It stays up a few seconds after the last take, so the next line of a script, asked for right
+/// after, doesn't have to start it again (Android won't allow that from the background).
+#[cfg(target_os = "android")]
+mod android_work {
+    use jni::objects::{JClass, JObject, JValue};
+    use std::time::Duration;
+
+    const LINGER: Duration = Duration::from_secs(10);
+
+    pub fn install() {
+        booth_core::engine::on_work(|on| {
+            if on {
+                set(true);
+            } else {
+                std::thread::spawn(|| {
+                    std::thread::sleep(LINGER);
+                    if booth_core::engine::working() == 0 {
+                        set(false);
+                    }
+                });
+            }
+        });
+    }
+
+    fn set(on: bool) {
+        if let Err(e) = call(on) {
+            booth_core::diag::note(format!("render service: couldn't turn it {}: {e}", if on { "on" } else { "off" }));
+        }
+    }
+
+    fn call(on: bool) -> Result<(), String> {
+        let ctx = ndk_context::android_context();
+        // SAFETY: tao hands ndk-context the process's JavaVM and a global ref to the application
+        // context; both live as long as the process.
+        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+        let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+        let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+        let r = (|| -> jni::errors::Result<()> {
+            // A native thread's FindClass only sees system classes: load ours through the app's loader.
+            let loader = env.call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
+            let name = env.new_string("com.nofacetube.booth.RenderService")?;
+            let class = env
+                .call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[JValue::Object(&name)])?
+                .l()?;
+            env.call_static_method(
+                JClass::from(class),
+                "set",
+                "(Landroid/content/Context;Z)V",
+                &[JValue::Object(&context), JValue::Bool(on as u8)],
+            )?;
+            Ok(())
+        })();
+        if r.is_err() && env.exception_check().unwrap_or(false) {
+            let _ = env.exception_describe();
+            let _ = env.exception_clear();
+        }
+        r.map_err(|e| e.to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
@@ -741,7 +803,10 @@ pub fn run() {
     builder
         .setup(|app| {
             #[cfg(target_os = "android")]
-            android_setup(app.handle())?;
+            {
+                android_setup(app.handle())?;
+                android_work::install();
+            }
             booth_core::diag::set_source("app");
             booth_core::diag::note(format!(
                 "app {} started on {} {}",
