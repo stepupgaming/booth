@@ -438,9 +438,9 @@ jobs:
       - name: Build the engine for the phone
         if: steps.key.outputs.ok == 'true' && steps.stored.outputs.found != 'true'
         shell: bash
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
+          # The runner's own variable, read in the shell: ${{ env.X }} only sees this file's env.
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           sudo apt-get update && sudo apt-get install -y ninja-build
           # Through bash: the repo is developed on Windows, where the executable bit is easy to lose.
           bash scripts/build-android-engine.sh zonos3
@@ -501,9 +501,9 @@ jobs:
         if: steps.key.outputs.ok == 'true'
         shell: bash
         working-directory: apps/native
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
-        run: pnpm tauri android build --apk --target aarch64
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          pnpm tauri android build --apk --target aarch64
 
       - name: Collect
         if: steps.key.outputs.ok == 'true'
