@@ -62,7 +62,7 @@ function VoiceCard({ v, current }: { v: Voice; current: boolean }) {
           src={src}
         />
       </div>
-      <Wave bars={48} height={22} seed={(hash(v.id) % 97) + 11} src={src} />
+      <Wave height={22} seed={(hash(v.id) % 97) + 11} src={src} />
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {canExact(v) ? <Tag label="Exact" strong={true} /> : null}
         {canShape(v) ? <Tag label="Shapeable" /> : null}

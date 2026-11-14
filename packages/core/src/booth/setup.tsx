@@ -393,7 +393,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
                     </span>
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Wave bars={110} height={26} seed={4} src="/sample-rupert.mp3" />
+                    <Wave height={26} seed={4} src="/sample-rupert.mp3" />
                   </div>
                   <span className="mono faint" style={{ fontSize: 11 }}>
                     0:13

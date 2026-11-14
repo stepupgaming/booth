@@ -98,7 +98,7 @@ function TakeRow({
           </span>
         </span>
       </div>
-      <Wave bars={phone ? 56 : 120} height={30} seed={t.seed ?? 7} src={src} />
+      <Wave height={30} seed={t.seed ?? 7} src={src} />
       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
         {phone ? null : (
           <button

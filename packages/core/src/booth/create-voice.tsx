@@ -163,7 +163,7 @@ function TakeCard({ t, n }: { t: Take; n: number }) {
           </span>
         </span>
       </div>
-      <Wave bars={80} height={38} seed={t.seed ?? n} src={src} />
+      <Wave height={38} seed={t.seed ?? n} src={src} />
     </div>
   );
 }

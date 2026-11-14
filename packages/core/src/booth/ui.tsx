@@ -315,16 +315,20 @@ export function speechBars(seed: number, n: number): number[] {
 }
 
 const peakCache = new Map<string, Promise<number[]>>();
+const fakeCache = new Map<number, number[]>();
 let ctx: AudioContext | null = null;
 
-async function loadPeaks(url: string, n: number): Promise<number[]> {
+/** An envelope is read once at this many points, then resampled to whatever bar count fits. */
+const ENVELOPE = 1024;
+
+async function loadPeaks(url: string): Promise<number[]> {
   const buf = await fetch(url).then((r) => r.arrayBuffer());
   ctx ??= new AudioContext();
   const audioBuf = await ctx.decodeAudioData(buf);
   const data = audioBuf.getChannelData(0);
-  const step = Math.max(1, Math.floor(data.length / n));
+  const step = Math.max(1, Math.floor(data.length / ENVELOPE));
   const out: number[] = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < ENVELOPE; i++) {
     let m = 0;
     for (let j = i * step; j < Math.min(data.length, (i + 1) * step); j++) {
       const v = Math.abs(data[j] as number);
@@ -338,50 +342,95 @@ async function loadPeaks(url: string, n: number): Promise<number[]> {
   return out.map((v) => Math.max(0.03, (v / top) ** 0.8));
 }
 
+/** `n` bars out of a longer envelope, each one the loudest point it covers. */
+function resample(src: number[], n: number): number[] {
+  if (n < 1 || src.length === 0) {
+    return [];
+  }
+  return Array.from({ length: n }, (_, i) => {
+    const a = Math.floor((i * src.length) / n);
+    const b = Math.min(src.length, Math.max(a + 1, Math.floor(((i + 1) * src.length) / n)));
+    let m = 0;
+    for (let j = a; j < b; j++) {
+      m = Math.max(m, src[j] as number);
+    }
+    return m;
+  });
+}
+
 export function usePeaks(url: string | null, n: number, seed: number) {
-  const [bars, setBars] = useState<number[] | null>(null);
+  const [full, setFull] = useState<number[] | null>(null);
   useEffect(() => {
-    setBars(null);
+    setFull(null);
     if (!url) {
       return;
     }
-    const key = `${url}#${n}`;
-    let p = peakCache.get(key);
+    let p = peakCache.get(url);
     if (!p) {
-      p = loadPeaks(url, n);
-      peakCache.set(key, p);
-      p.catch(() => peakCache.delete(key));
+      p = loadPeaks(url);
+      peakCache.set(url, p);
+      p.catch(() => peakCache.delete(url));
     }
     let live = true;
-    p.then((b) => live && setBars(b)).catch(() => undefined);
+    p.then((b) => live && setFull(b)).catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [url, n]);
-  return useMemo(() => bars ?? speechBars(seed, n), [bars, seed, n]);
+  }, [url]);
+  return useMemo(() => {
+    if (full) {
+      return resample(full, n);
+    }
+    let fake = fakeCache.get(seed);
+    if (!fake) {
+      fake = speechBars(seed, ENVELOPE);
+      fakeCache.set(seed, fake);
+    }
+    return resample(fake, n);
+  }, [full, seed, n]);
 }
 
 const PLAYED = "#FFFFFF";
 const UNPLAYED = "rgba(255,255,255,0.20)";
 const REST = "rgba(255,255,255,0.32)";
 
+/** px from one 1.5px bar to the next. The bar count follows the width, so nothing ever overflows. */
+const PITCH = 4;
+
 /** Dense 1.5px bars. With `src` it draws the real file and shows the play head when it plays. */
 export function Wave({
   src,
-  bars = 96,
   height = 44,
   seed = 1,
+  pitch = PITCH,
 }: {
   src?: string | null;
-  bars?: number;
   height?: number;
   seed?: number;
+  pitch?: number;
 }) {
-  const peaks = usePeaks(src ?? null, bars, seed);
+  const ref = useRef<HTMLDivElement>(null);
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!(el && typeof ResizeObserver === "function")) {
+      return;
+    }
+    const fit = (w: number) => setN(w > 0 ? Math.max(8, Math.round(w / pitch)) : 0);
+    fit(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      const first = entries[0];
+      if (first) {
+        fit(first.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pitch]);
+  const peaks = usePeaks(src ?? null, n, seed);
   const cur = usePlayer((s) => (src && s.src === src ? s.progress : null));
   const active = cur !== null && cur > 0 && cur < 1;
   const seek = usePlayer((s) => s.seek);
-  const ref = useRef<HTMLDivElement>(null);
   const onClick = useCallback(
     (e: React.MouseEvent) => {
       if (!(src && ref.current)) {
