@@ -442,7 +442,8 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
           sudo apt-get update && sudo apt-get install -y ninja-build
-          scripts/build-android-engine.sh zonos3
+          # Through bash: the repo is developed on Windows, where the executable bit is easy to lose.
+          bash scripts/build-android-engine.sh zonos3
           tar -czf engine-android-arm64.tar.gz \
             apps/native/src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libzonos3server.so \
             apps/native/src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libboothdecode.so \
