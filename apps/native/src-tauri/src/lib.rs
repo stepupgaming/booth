@@ -716,6 +716,10 @@ fn allow_media(app: &AppHandle) {
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
+/// Kept for the life of the process: it tells booth-mcp that a Booth window is open, so Claude
+/// closing down doesn't take the engine away from it.
+static HOLD: std::sync::OnceLock<engine::Holder> = std::sync::OnceLock::new();
+
 /// Android: Booth's folder is the app's own storage (there is no `%LOCALAPPDATA%`), and the
 /// engine's LACI heads, built into the app, are unpacked next to it. The engine program itself
 /// ships in the native library folder (`paths::server_exe`).
@@ -818,6 +822,8 @@ pub fn run() {
                 std::env::consts::ARCH
             ));
             allow_media(app.handle());
+            // So booth-mcp doesn't free the engine from under this window when Claude closes down.
+            let _ = HOLD.set(engine::Holder::new("the Booth app"));
             // So booth-mcp, installed in Claude's own folder, finds the engine that shipped here.
             if let Ok(dir) = app.path().resource_dir() {
                 paths::record_install(&dir);

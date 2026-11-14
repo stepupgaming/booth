@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use booth_core::{
     engine, models, paths, settings,
@@ -385,6 +386,29 @@ impl ServerHandler for Booth {
     }
 }
 
+/// Claude runs this server for as long as it is open, so an engine started from here would hold
+/// its ~700 MB (and the graphics card) for the rest of the day. Give it back after a quiet spell;
+/// the next line pays a couple of seconds to load it again.
+const QUIET: Duration = Duration::from_secs(10 * 60);
+
+async fn free_engine_when_quiet() {
+    let step = Duration::from_secs(60);
+    let mut quiet = Duration::ZERO;
+    loop {
+        tokio::time::sleep(step).await;
+        if engine::working() > 0 {
+            quiet = Duration::ZERO;
+            continue;
+        }
+        quiet += step;
+        // Checked here as well so an open Booth window doesn't put a line in the log every QUIET.
+        if quiet >= QUIET && engine::wanted_elsewhere().is_none() {
+            quiet = Duration::ZERO;
+            engine::stop_unless_wanted(Duration::ZERO).await;
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--version") {
@@ -392,7 +416,12 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     booth_core::diag::set_source("mcp");
+    let hold = engine::Holder::new("Claude");
+    tokio::spawn(free_engine_when_quiet());
     let service = Booth::new().serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
+    // Claude has closed us down: free the engine unless the Booth app is up and wants it.
+    drop(hold);
+    engine::stop_unless_wanted(Duration::from_secs(20)).await;
     Ok(())
 }

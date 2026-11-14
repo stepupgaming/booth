@@ -10,6 +10,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -412,6 +414,79 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
     }
 }
 
+const HOLD_EVERY: Duration = Duration::from_secs(60);
+const HOLD_STALE: Duration = Duration::from_secs(180);
+
+/// Says this process wants the engine for as long as it runs: the app while its window is open,
+/// booth-mcp while Claude keeps it running. A process on its way out reads these before freeing
+/// the engine, so it doesn't take it from under the other one.
+///
+/// The marker is touched every minute. A process that is killed outright stops touching it, so a
+/// marker it leaves behind goes stale instead of pinning the engine for ever.
+pub struct Holder(PathBuf, Arc<AtomicBool>);
+
+impl Holder {
+    /// `who` is what the log calls this process when it keeps the engine alive.
+    pub fn new(who: &str) -> Self {
+        let dir = paths::home().join("holders");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(std::process::id().to_string());
+        let _ = std::fs::write(&path, who.as_bytes());
+        let done = Arc::new(AtomicBool::new(false));
+        let (p, d) = (path.clone(), Arc::clone(&done));
+        let who = who.to_string();
+        // A plain thread, so this works the same from the app's runtime and from booth-mcp's.
+        std::thread::spawn(move || {
+            while !d.load(Ordering::SeqCst) {
+                std::thread::sleep(HOLD_EVERY);
+                if d.load(Ordering::SeqCst) {
+                    break;
+                }
+                let _ = std::fs::write(&p, who.as_bytes());
+            }
+        });
+        Self(path, done)
+    }
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        self.1.store(true, Ordering::SeqCst);
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Other Booth processes that want the engine right now. Stale markers are cleaned up here.
+fn other_holders() -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(paths::home().join("holders")) else { return Vec::new() };
+    let me = std::process::id().to_string();
+    let mut out = Vec::new();
+    for e in rd.filter_map(|e| e.ok()) {
+        if e.file_name().to_str() == Some(me.as_str()) {
+            continue;
+        }
+        let fresh = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().unwrap_or_default() < HOLD_STALE)
+            .unwrap_or(false);
+        if fresh {
+            out.push(std::fs::read_to_string(e.path()).unwrap_or_default().trim().to_string());
+        } else {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    out
+}
+
+/// What wants the engine kept running besides this process: the setting, or another Booth process.
+pub fn wanted_elsewhere() -> Option<String> {
+    if settings::load().keep_engine_running {
+        return Some("the keep-the-engine-running setting".into());
+    }
+    other_holders().into_iter().find(|who| !who.is_empty())
+}
+
 /// Marks a request in flight on the engine. `stop()` waits until none are left, because killing a
 /// process in the middle of CUDA work can hang the GPU driver (it has crashed this kind of machine).
 pub struct BusyGuard(PathBuf, #[allow(dead_code)] Working);
@@ -556,6 +631,20 @@ pub async fn stop_when_idle(wait: Duration) -> Result<bool> {
 
 pub async fn stop() -> Result<bool> {
     stop_when_idle(Duration::from_secs(600)).await
+}
+
+/// Give the engine's ~700 MB back now that this process is done with it, unless something else
+/// wants it: the "keep the engine running" setting, or an open Booth window. Says whether the
+/// engine is stopped afterwards.
+pub async fn stop_unless_wanted(wait: Duration) -> bool {
+    if read_lock().is_none() {
+        return true;
+    }
+    if let Some(who) = wanted_elsewhere() {
+        crate::diag::note(format!("engine: left running for {who}"));
+        return false;
+    }
+    matches!(stop_when_idle(wait).await, Ok(true))
 }
 
 /// Restart so newly downloaded packs are loaded.
