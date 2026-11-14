@@ -21,6 +21,8 @@ abspath() { (cd "$1" && { pwd -W 2>/dev/null || pwd; }); }
 ZONOS3=$(abspath "${1:?usage: $0 <ZONOS3-Mini checkout> [build folder]}")
 ROOT=$(abspath "$(dirname "$0")/..")
 BUILD=${2:-$ROOT/target/android-engine}
+mkdir -p "$BUILD"
+BUILD=$(abspath "$BUILD") # a Git Bash path like /c/tmp/x would have cmake build in C:\c\tmp\x
 API=28
 TRIPLE=aarch64-linux-android
 # dotprod and fp16: every phone CPU since ~2019 (Cortex-A55/A75 and later).
@@ -53,12 +55,15 @@ cmake -S "$ZONOS3/servers/ggml" -B "$BUILD" -G Ninja \
   -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_CCACHE=OFF -DGGML_CPU_ARM_ARCH=$ARM_ARCH \
   -DBUILD_SHARED_LIBS=OFF
 
-# The engine's CMake builds its Rust text normaliser for the host; build it for the phone instead
-# and put it where CMake expects it.
+# The engine's CMake builds its Rust text normaliser for the host, which the phone can't link.
+# Let that rule run once so ninja records it, then put the arm64 build in its place: ninja leaves
+# an output alone once it is newer than its sources. Skipping the first step instead would mean
+# ninja runs the rule on its own later (a cold build log makes every rule dirty) and overwrites
+# the arm64 library, which ends in "is incompatible with aarch64linux" at link time.
+cmake --build "$BUILD" --target zyphra-textnorm-build
 cargo rustc --release --locked --lib -p zyphra-textnorm --features capi --crate-type staticlib \
   --manifest-path "$ZONOS3/third_party/zyphra-textnorm/Cargo.toml" \
   --target $TRIPLE --target-dir "$BUILD/textnorm-android"
-mkdir -p "$BUILD/textnorm/release"
 cp "$BUILD/textnorm-android/$TRIPLE/release/libzyphra_textnorm.a" "$BUILD/textnorm/release/libzyphra_textnorm.a"
 
 cmake --build "$BUILD" --target zonos3-server
