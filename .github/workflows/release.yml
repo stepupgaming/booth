@@ -360,9 +360,168 @@ jobs:
           name: booth-${{ runner.os }}
           path: out
 
+  android:
+    name: Booth for Android
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Tag
+        id: tag
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      # A phone only installs an APK signed with the same key as the one it already has, so a build
+      # without the key is no use to anyone: the job says so and stops instead of shipping one.
+      - name: Unpack the signing key
+        id: key
+        shell: bash
+        env:
+          ANDROID_SIGNING: ${{ secrets.ANDROID_SIGNING }}
+        run: |
+          if [ -z "$ANDROID_SIGNING" ]; then
+            echo "::warning::ANDROID_SIGNING isn't set, so this release has no APK. It is a base64 zip holding booth-release.jks and keystore.properties."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          dir="$HOME/.booth-android"
+          mkdir -p "$dir"
+          printf '%s' "$ANDROID_SIGNING" | base64 -d > "$RUNNER_TEMP/signing.zip"
+          unzip -o -q "$RUNNER_TEMP/signing.zip" -d "$dir"
+          rm "$RUNNER_TEMP/signing.zip"
+          cp "$dir/keystore.properties" apps/native/src-tauri/gen/android/keystore.properties
+          # The path in the file is the one it was written on; point it at this runner's copy.
+          sed -i "s|^storeFile=.*|storeFile=$dir/booth-release.jks|" apps/native/src-tauri/gen/android/keystore.properties
+          test -f "$dir/booth-release.jks"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      # ---------- the engine that ships inside the app ----------
+
+      - name: Look for the stored engine
+        id: stored
+        if: steps.key.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download "$PORTABLE_TAG" --repo "${{ github.repository }}" --pattern engine-android-arm64.tar.gz --dir . ; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Using engine-android-arm64.tar.gz from $PORTABLE_TAG"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No engine-android-arm64.tar.gz on $PORTABLE_TAG yet; building it"
+          fi
+
+      - name: Check out ZONOS3-Mini
+        if: steps.key.outputs.ok == 'true' && steps.stored.outputs.found != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Zyphra/ZONOS3-Mini
+          ref: ${{ env.ZONOS3_REF }}
+          path: zonos3
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.key.outputs.ok == 'true'
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        if: steps.key.outputs.ok == 'true'
+
+      # zonos3-server and booth-decode, cross-compiled for arm64 and named like libraries: Android
+      # only runs programs out of an app's native library folder.
+      - name: Build the engine for the phone
+        if: steps.key.outputs.ok == 'true' && steps.stored.outputs.found != 'true'
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          scripts/build-android-engine.sh zonos3
+          tar -czf engine-android-arm64.tar.gz \
+            apps/native/src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libzonos3server.so \
+            apps/native/src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libboothdecode.so \
+            apps/native/src-tauri/android-engine
+
+      - name: Store the engine
+        if: steps.key.outputs.ok == 'true' && steps.stored.outputs.found != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$PORTABLE_TAG" --repo "${{ github.repository }}" --prerelease --latest=false \
+            --title "Portable engine builds ($PORTABLE_TAG)" \
+            --notes "zonos3-server from Zyphra/ZONOS3-Mini@$ZONOS3_REF. Used by the release workflow; not an app download." || true
+          gh release upload "$PORTABLE_TAG" engine-android-arm64.tar.gz --repo "${{ github.repository }}" --clobber
+
+      - name: Unpack the engine
+        if: steps.key.outputs.ok == 'true' && steps.stored.outputs.found == 'true'
+        shell: bash
+        run: tar -xzf engine-android-arm64.tar.gz
+
+      # ---------- the app ----------
+
+      - uses: actions/setup-java@v4
+        if: steps.key.outputs.ok == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: pnpm/action-setup@v4
+        if: steps.key.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.ok == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        if: steps.key.outputs.ok == 'true'
+
+      - name: Install packages
+        if: steps.key.outputs.ok == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Version from the tag
+        if: steps.key.outputs.ok == 'true'
+        shell: bash
+        run: |
+          node -e '
+            const f = "apps/native/src-tauri/tauri.conf.json";
+            const c = JSON.parse(require("fs").readFileSync(f, "utf8"));
+            c.version = process.argv[1];
+            require("fs").writeFileSync(f, JSON.stringify(c, null, 2));
+          ' "${{ steps.tag.outputs.version }}"
+
+      - name: Build the APK
+        if: steps.key.outputs.ok == 'true'
+        shell: bash
+        working-directory: apps/native
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: pnpm tauri android build --apk --target aarch64
+
+      - name: Collect
+        if: steps.key.outputs.ok == 'true'
+        shell: bash
+        run: |
+          mkdir -p out
+          apk=apps/native/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          cp "$apk" out/Booth-android.apk
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.ok == 'true'
+        with:
+          name: booth-android
+          path: out
+
   publish:
     name: Publish the release
-    needs: [cuda-engine, app]
+    needs: [cuda-engine, app, android]
     # A platform that failed is left out; Windows is required.
     if: always() && needs.cuda-engine.result == 'success'
     runs-on: ubuntu-22.04
