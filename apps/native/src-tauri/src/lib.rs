@@ -85,7 +85,10 @@ async fn system_check() -> Res<SystemCheck> {
         RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing()).with_memory(MemoryRefreshKind::nothing().with_ram()),
     );
     let cpu = sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty());
-    let cpu_threads = sys.cpus().len().max(1);
+    // On Android /proc/cpuinfo lists only the cores that are awake, so a phone reports 1 core while
+    // the little cluster is parked. The affinity mask knows how many it may use.
+    let affinity = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let cpu_threads = sys.cpus().len().max(affinity).max(1);
     let ram_gb = (sys.total_memory() as f64 / 1e9).round();
     let (gpu, vram_gb, gpu_kind) = if cfg!(target_os = "macos") {
         let chip = tokio::task::spawn_blocking(apple_chip).await.map_err(err)?;
