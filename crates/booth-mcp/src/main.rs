@@ -54,9 +54,14 @@ struct SpeakArgs {
     /// Controls by id from list_controls, id -> dose, e.g. {"happy": 3, "pace": -0.5, "accent:british": 1.2}.
     #[serde(default)]
     controls: BTreeMap<String, f64>,
-    /// Seed for a repeatable take.
+    /// Seed for a repeatable take. With a seed, Booth keeps the take as it is; without one, it
+    /// redoes an Exact take that comes out sounding like a different person.
     #[serde(default)]
     seed: Option<u64>,
+    /// Sampling temperature, 0.4 to 0.75. Default: the engine's 0.75. Lower makes takes of the
+    /// same line sound more alike, with a little less life.
+    #[serde(default)]
+    temperature: Option<f64>,
     /// Language of the text. Default: the language chosen in Booth (US English unless changed). Codes: en_us en_gb fr_fr de es it pt_br ja cmn ko ar bn bg cs
     /// da nl fi ka el gu he hi hu id kn ms ml mr no or pl pa ro ru sk sv tl ta te th tr uk ur vi.
     #[serde(default)]
@@ -156,6 +161,8 @@ fn take_json(t: &Take) -> Value {
         "seed": t.seed,
         "mode": t.mode,
         "created_at": t.created_at,
+        "redone": t.redone,
+        "sounds_off": t.drifted,
     })
 }
 
@@ -252,6 +259,8 @@ impl Booth {
             seed: a.seed,
             language: a.language,
             via: "mcp".into(),
+            temperature: a.temperature,
+            drift_check: a.seed.is_none(),
         };
         match studio::speak(&z, &a.text, &opts).await {
             Ok(t) => ok_json(take_json(&t)),

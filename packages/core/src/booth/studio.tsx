@@ -24,13 +24,11 @@ interface Sound {
   room: number;
   accent: string | null;
   accentAmt: number;
+  /** 0 = Zyphra's sampling (temperature 0.75); 100 = temperature 0.4, the steadiest we tested. */
+  steady?: number;
 }
 
-const NEW_SOUND: Sound = {
-  mood: null,
-  strength: 60,
-  extras: [],
-  delivery: {},
+const NEW_SHAPE: Pick<Sound, "gender" | "age" | "texture" | "textureAmt" | "room" | "accent" | "accentAmt"> = {
   gender: 0,
   age: 0,
   texture: null,
@@ -39,6 +37,22 @@ const NEW_SOUND: Sound = {
   accent: null,
   accentAmt: 70,
 };
+
+const NEW_SOUND: Sound = {
+  mood: null,
+  strength: 60,
+  extras: [],
+  delivery: {},
+  ...NEW_SHAPE,
+  steady: 0,
+};
+
+/** Zyphra's default sampling temperature, and the lowest Booth goes (tested on 100 takes per setting). */
+const TEMP_DEFAULT = 0.75;
+const TEMP_STEADIEST = 0.4;
+const temperatureFor = (steady: number) =>
+  steady > 0 ? round2(TEMP_DEFAULT - (steady / 100) * (TEMP_DEFAULT - TEMP_STEADIEST)) : null;
+const MAX_TAKES = 10;
 
 const DELIVERY: { key: string; label: string; poles: string }[] = [
   { key: "pitch", label: "Pitch", poles: "lower · higher" },
@@ -67,6 +81,73 @@ const OTHER_LANGUAGES = [
 ].map(([value, label]) => ({ value: value as string, label: label as string }));
 
 const seed = () => 1 + Math.floor(Math.random() * 2_147_483_000);
+
+/** One quiet line under a script line when Booth redid takes that sounded unlike the voice. */
+function DriftNote({ takes }: { takes: Take[] }) {
+  const redone = takes.filter((t) => t.redone && !t.drifted).length;
+  const off = takes.filter((t) => t.drifted).length;
+  if (!(redone || off)) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (redone) {
+    parts.push(`${redone} take${redone === 1 ? "" : "s"} sounded off and ${redone === 1 ? "was" : "were"} redone`);
+  }
+  if (off) {
+    parts.push(`${off} still ${off === 1 ? "sounds" : "sound"} off after two more tries and ${off === 1 ? "is" : "are"} marked`);
+  }
+  const text = parts.join("; ");
+  return <p className="faint small" style={{ margin: "0 0 10px" }}>{text.charAt(0).toUpperCase() + text.slice(1)}.</p>;
+}
+
+/** A heading that opens and closes its section, with what's changed inside shown while it's closed. */
+function Fold({
+  id,
+  title,
+  open,
+  onToggle,
+  changed,
+  onReset,
+  badge,
+  children,
+}: {
+  id: string;
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  changed: number;
+  onReset: () => void;
+  badge?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <h2 className="h2" style={{ margin: 0 }}>
+          <button aria-controls={id} aria-expanded={open} className="fold" onClick={onToggle} type="button">
+            <span aria-hidden="true" className="fold-chev">
+              {open ? "▾" : "▸"}
+            </span>
+            {title}
+            {changed ? <span className="fold-count">{changed} changed</span> : null}
+          </button>
+        </h2>
+        {changed ? (
+          <button className="link small faint" onClick={onReset} type="button">
+            Reset
+          </button>
+        ) : (
+          badge
+        )}
+      </div>
+      {open ? (
+        <div id={id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 const firstLines: Line[] = [
   { id: "a", text: "I honestly didn't think we'd make it this far.", takes: [], kept: null },
   { id: "b", text: "But here we are, and the whole team is waiting outside.", takes: [], kept: null },
@@ -88,7 +169,11 @@ export function Studio() {
   const [sel, setSel] = usePref("selLine", 0);
   const [modePref, setMode] = usePref<Mode>("mode", "exact");
   const [sound, setSound] = usePref<Sound>("sound", NEW_SOUND);
-  const [perLine] = usePref("takesPerLine", 3);
+  const [perLineRaw, setPerLine] = usePref("takesPerLine", 3);
+  const perLine = Math.min(MAX_TAKES, Math.max(1, Math.round(perLineRaw) || 3));
+  // Delivery and Shape the voice start closed on phones, so the script and takes stay near the top.
+  const [deliveryOpen, setDeliveryOpen] = usePref("fold.delivery", !phone);
+  const [shapeOpen, setShapeOpen] = usePref("fold.shape", !phone);
   const [running, setRunning] = useState<string | null>(null);
   const stopRef = useRef(false);
   const linesRef = useRef(lines);
@@ -99,6 +184,10 @@ export function Studio() {
   const mode: Mode = modePref === "exact" && !exactOk ? "shapeable" : modePref === "shapeable" && !shapeOk ? "exact" : modePref;
   const exact = mode === "exact";
   const selIdx = Math.min(sel, lines.length - 1);
+  // On phones a line only becomes a text box when you mean to type in it, so picking a line to hear
+  // its takes doesn't pop up the keyboard. Tap a line to pick it; tap it again (or the pencil) to edit.
+  const [editing, setEditing] = useState<string | null>(null);
+  const isEditing = (l: Line) => !phone || editing === l.id || !l.text.trim();
   const selLine = lines[selIdx];
 
   const up = (patch: Partial<Sound>) => setSound({ ...sound, ...patch });
@@ -155,6 +244,12 @@ export function Studio() {
     return out;
   }, [catalog, sound, exact]);
 
+  const steady = sound.steady ?? 0;
+  const temperature = temperatureFor(steady);
+  const deliveryChanged = DELIVERY.filter((d) => (sound.delivery[d.key] ?? 0) !== 0).length + (steady > 0 ? 1 : 0);
+  const shapeChanged =
+    (sound.gender ? 1 : 0) + (sound.age ? 1 : 0) + (sound.texture ? 1 : 0) + (sound.room ? 1 : 0) + (sound.accent ? 1 : 0);
+
   const renderLine = async (i: number, replace: boolean) => {
     const line = linesRef.current[i];
     if (!(line?.text.trim() && voice)) {
@@ -166,7 +261,7 @@ export function Studio() {
       const engineUp = useBooth.getState().overview?.engine.state === "running";
       setRunning(`${engineUp ? "Line" : "Starting the engine · line"} ${i + 1} · take ${n + 1} of ${perLine}`);
       const t = await work(() =>
-        api.speak({ text: line.text.trim(), voice: voice.id, mode, controls, seed: seed() })
+        api.speak({ text: line.text.trim(), voice: voice.id, mode, controls, seed: seed(), temperature })
       );
       takes = [...takes, t];
       const cur = linesRef.current[i];
@@ -362,29 +457,54 @@ export function Studio() {
                 <span className="mono" style={{ color: "var(--b-fainter)", fontSize: 12 }}>
                   {String(i + 1).padStart(2, "0")}
                 </span>
-                <input
-                  aria-label={`Line ${i + 1}`}
-                  onChange={(e) => setLine(i, { text: e.target.value })}
-                  onFocus={() => setSel(i)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      const next = [...lines];
-                      next.splice(i + 1, 0, { id: newId(), text: "", takes: [], kept: null });
-                      setLines(next);
-                      setSel(i + 1);
-                    }
-                  }}
-                  onPaste={(e) => onPaste(i, e)}
-                  placeholder="Type a line…"
-                  style={{
-                    all: "unset",
-                    flex: 1,
-                    minWidth: 0,
-                    lineHeight: 1.6,
-                    fontSize: 15,
-                  }}
-                  value={l.text}
-                />
+                {isEditing(l) ? (
+                  <input
+                    aria-label={`Line ${i + 1}`}
+                    autoFocus={phone && editing === l.id}
+                    onBlur={() => setEditing((e) => (e === l.id ? null : e))}
+                    onChange={(e) => setLine(i, { text: e.target.value })}
+                    onFocus={() => setSel(i)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const fresh = { id: newId(), text: "", takes: [], kept: null };
+                        const next = [...lines];
+                        next.splice(i + 1, 0, fresh);
+                        setLines(next);
+                        setSel(i + 1);
+                        setEditing(fresh.id);
+                      }
+                    }}
+                    onPaste={(e) => onPaste(i, e)}
+                    placeholder="Type a line…"
+                    style={{
+                      all: "unset",
+                      flex: 1,
+                      minWidth: 0,
+                      lineHeight: 1.6,
+                      fontSize: 15,
+                    }}
+                    value={l.text}
+                  />
+                ) : (
+                  <button
+                    aria-label={on ? `Edit line ${i + 1}` : `Line ${i + 1}: ${l.text}`}
+                    className="line-pick"
+                    onClick={() => (on ? setEditing(l.id) : setSel(i))}
+                    type="button"
+                  >
+                    {l.text}
+                  </button>
+                )}
+                {phone && on && !isEditing(l) ? (
+                  <button
+                    aria-label={`Edit line ${i + 1}`}
+                    className="btn ghost sm icon-btn"
+                    onClick={() => setEditing(l.id)}
+                    type="button"
+                  >
+                    {Icon.edit}
+                  </button>
+                ) : null}
                 <span className="muted small wide-only" style={{ whiteSpace: "nowrap" }}>
                   {status}
                 </span>
@@ -433,19 +553,54 @@ export function Studio() {
               className="btn ghost"
               disabled={!!running}
               onClick={() => {
-                setLines([...lines, { id: newId(), text: "", takes: [], kept: null }]);
+                const fresh = { id: newId(), text: "", takes: [], kept: null };
+                setLines([...lines, fresh]);
                 setSel(lines.length);
+                setEditing(fresh.id);
               }}
               type="button"
             >
               Add line
             </button>
-            <span className="faint small" style={{ marginLeft: "auto" }}>
-              {running ?? `${perLine} take${perLine === 1 ? "" : "s"} per line`}
-            </span>
+            {running ? (
+              <span className="faint small" style={{ marginLeft: "auto" }}>
+                {running}
+              </span>
+            ) : (
+              <div
+                aria-label="Takes per line"
+                className="stepper"
+                role="group"
+                style={{ marginLeft: "auto" }}
+                title="More takes give you more to pick from; each one takes a few seconds."
+              >
+                <button
+                  aria-label="Fewer takes"
+                  className="btn sm ghost icon-btn"
+                  disabled={perLine <= 1}
+                  onClick={() => setPerLine(perLine - 1)}
+                  type="button"
+                >
+                  −
+                </button>
+                <span aria-live="polite" className="small stepper-value">
+                  {perLine} take{perLine === 1 ? "" : "s"}
+                </span>
+                <button
+                  aria-label="More takes"
+                  className="btn sm ghost icon-btn"
+                  disabled={perLine >= MAX_TAKES}
+                  onClick={() => setPerLine(perLine + 1)}
+                  type="button"
+                >
+                  +
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
+        {selLine && selLine.takes.length > 0 ? <DriftNote takes={selLine.takes} /> : null}
         {selLine && selLine.takes.length > 0 ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 14 }}>
             {selLine.takes.map((t, n) => {
@@ -464,6 +619,19 @@ export function Studio() {
                       >
                         {t.seconds.toFixed(1)} s · seed {t.seed ?? "?"}
                       </span>
+                      {t.drifted || t.redone ? (
+                        <span
+                          className={t.drifted ? "warn" : "faint"}
+                          style={{ fontSize: 11 }}
+                          title={
+                            t.drifted
+                              ? "This take still sounded unlike the voice after two more tries; it was the closest."
+                              : "The first try sounded unlike the voice, so Booth made it again."
+                          }
+                        >
+                          {t.drifted ? "Sounds off" : "Redone"}
+                        </span>
+                      ) : null}
                     </span>
                     <button
                       className={`btn sm ${k ? "kept" : "ghost"}`}
@@ -570,11 +738,15 @@ export function Studio() {
 
         <div className="divider" />
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-            <h2 className="h2">Delivery</h2>
-            <span className="badge">both modes</span>
-          </div>
+        <Fold
+          badge={<span className="badge">both modes</span>}
+          changed={deliveryChanged}
+          id="fold-delivery"
+          onReset={() => up({ delivery: {}, steady: 0 })}
+          onToggle={() => setDeliveryOpen(!deliveryOpen)}
+          open={deliveryOpen}
+          title="Delivery"
+        >
           {DELIVERY.map((d) => (
             <DoseSlider
               disabled={d.key !== "pitch" && !!catalog && !controlById(catalog, d.key)}
@@ -589,7 +761,20 @@ export function Studio() {
               value={sound.delivery[d.key] ?? 0}
             />
           ))}
-        </div>
+          <DoseSlider
+            label="Steadiness"
+            max={100}
+            min={0}
+            onChange={(v) => up({ steady: v })}
+            poles={steady ? `${steady}%` : "default"}
+            step={1}
+            title="Double-click to reset"
+            value={steady}
+          />
+          <p className="faint" style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}>
+            Steadier takes sound more alike from one to the next, with a little less life.
+          </p>
+        </Fold>
 
         <div
           style={{
@@ -603,10 +788,15 @@ export function Studio() {
               : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)" }),
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-            <h2 className="h2">Shape the voice</h2>
-            <span className={`badge${exact ? "" : " ok"}`}>{exact ? "Shapeable only" : "on"}</span>
-          </div>
+          <Fold
+            badge={<span className={`badge${exact ? "" : " ok"}`}>{exact ? "Shapeable only" : "on"}</span>}
+            changed={shapeChanged}
+            id="fold-shape"
+            onReset={() => up(NEW_SHAPE)}
+            onToggle={() => setShapeOpen(!shapeOpen)}
+            open={shapeOpen}
+            title="Shape the voice"
+          >
           {exact ? (
             <p style={{ margin: 0, fontSize: 13, color: "var(--b-text-2)", lineHeight: 1.5 }}>
               These change who is speaking, so they need the Shapeable voice.{" "}
@@ -712,6 +902,7 @@ export function Studio() {
               value={sound.accentAmt}
             />
           ) : null}
+          </Fold>
         </div>
 
         <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13 }}>

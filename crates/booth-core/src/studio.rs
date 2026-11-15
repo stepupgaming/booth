@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{GenerateRequest, SpeakerMode, Zonos};
+use crate::drift;
 use crate::settings;
 use crate::takes::{self, ScriptLine, Take};
 use crate::voices;
@@ -24,6 +25,10 @@ pub struct SpeakOptions {
     pub language: Option<String>,
     /// `app` or `mcp`, recorded on the take.
     pub via: String,
+    /// Sampling temperature; None = the engine's default (0.75). Kept to 0.4 to 0.75, the range tested.
+    pub temperature: Option<f64>,
+    /// Redo a take that sounds unlike the voice (see `drift`). Off when the caller pinned a seed.
+    pub drift_check: bool,
 }
 
 async fn pick_voice(z: &Zonos, key: Option<&str>) -> Result<voices::Voice> {
@@ -69,12 +74,30 @@ pub async fn speak(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<Take> {
         language: opts.language.clone().or_else(|| s.language.clone()),
         controls,
         seed: opts.seed,
+        temperature: opts.temperature.map(|t| t.clamp(0.4, 0.75)),
         decoder: s.decoder.clone(),
         laci: s.laci.then_some(true),
         ..Default::default()
     };
     voice.apply(&mut req, mode)?;
     let audio = z.generate(&req).await?;
+    // Only Exact takes drifted in testing, and only when nothing in the request changes who is
+    // speaking on purpose (gender, age, texture, accent, room, or a designed voice's own shape).
+    let check = opts.drift_check
+        && req.speaker_mode == Some(SpeakerMode::Reference)
+        && !req.controls.keys().any(|d| cat.needs_shapeable(d));
+    let target = if check { drift::voiceprint(z, &voice).await } else { None };
+    let (audio, verdict) = match target {
+        Some(t) => {
+            let mut friendly = opts.controls.clone();
+            for (k, v) in &voice.controls {
+                friendly.entry(k.clone()).or_insert(*v);
+            }
+            let cut = drift::cutoff(&cat, &friendly);
+            drift::keep_closest(z, &mut req, audio, &t, cut).await
+        }
+        None => (audio, None),
+    };
     let take = Take {
         id: String::new(),
         text: text.to_string(),
@@ -91,6 +114,10 @@ pub async fn speak(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<Take> {
         decoder: audio.decoder.clone(),
         via: opts.via.clone(),
         parts: Vec::new(),
+        temperature: req.temperature,
+        voice_match: verdict.map(|v| (v.voice_match * 1000.0).round() / 1000.0),
+        redone: verdict.map_or(0, |v| v.redone),
+        drifted: verdict.is_some_and(|v| v.drifted),
         starred: false,
         path: Default::default(),
     };
@@ -135,6 +162,10 @@ pub async fn render_script(z: &Zonos, lines: &[ScriptLine], gap_ms: u32, via: &s
         decoder: None,
         via: via.into(),
         parts: lines.to_vec(),
+        temperature: None,
+        voice_match: None,
+        redone: 0,
+        drifted: false,
         starred: false,
         path: Default::default(),
     };

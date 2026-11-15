@@ -32,10 +32,26 @@ pub struct Take {
     /// For a rendered script: the lines it was made of.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<ScriptLine>,
+    /// Sampling temperature, when the take didn't use the engine's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// Voiceprint match with the voice (cosine), when Booth checked the take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_match: Option<f64>,
+    /// Times the take was made again because it sounded unlike the voice.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub redone: u32,
+    /// Still unlike the voice after the retries; this was the closest try.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub drifted: bool,
     #[serde(default)]
     pub starred: bool,
     #[serde(skip_deserializing, default)]
     pub path: PathBuf,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

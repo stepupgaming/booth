@@ -457,6 +457,10 @@ async fn export_takes(ids: Vec<String>, gap_ms: Option<u32>) -> Res<Take> {
         decoder: None,
         via: "app".into(),
         parts,
+        temperature: None,
+        voice_match: None,
+        redone: 0,
+        drifted: false,
         starred: true,
         path: Default::default(),
     };
@@ -474,6 +478,8 @@ struct SpeakArgs {
     #[serde(default)]
     controls: BTreeMap<String, f64>,
     seed: Option<u64>,
+    #[serde(default)]
+    temperature: Option<f64>,
 }
 
 fn mode_of(s: Option<&str>) -> Option<SpeakerMode> {
@@ -494,6 +500,9 @@ async fn speak(a: SpeakArgs) -> Res<Take> {
         seed: a.seed,
         language: None,
         via: "app".into(),
+        temperature: a.temperature,
+        // The app sends a fresh random seed per take, so a redo with another seed is fine.
+        drift_check: true,
     };
     studio::speak(&z, &a.text, &opts).await.map_err(err_chain)
 }

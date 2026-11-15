@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { accelWhere, api, type DownloadEvent, errText, gb, type PackInfo, type Settings as S } from "@workspace/core/booth/api";
 import { useBooth } from "@workspace/core/booth/store";
-import { Dropdown, Switch, usePref, useToast } from "@workspace/core/booth/ui";
+import { Dropdown, Switch, useToast } from "@workspace/core/booth/ui";
 
 const TOOLS: [string, string][] = [
   ["status", "Is the engine up, which packs are installed"],
@@ -381,7 +381,6 @@ export function Settings() {
   const toast = useToast();
   const overview = useBooth((s) => s.overview);
   const refresh = useBooth((s) => s.refresh);
-  const [perLine, setPerLine] = usePref("takesPerLine", 3);
   const settings = overview?.settings;
 
   const save = async (patch: Partial<S>) => {
@@ -414,15 +413,6 @@ export function Settings() {
             </button>
           </Row>
         ) : null}
-        <Row sub="More takes give you more to pick from; each one takes a few seconds." title="Takes per line">
-          <Dropdown
-            label="Takes per line"
-            onChange={(v) => setPerLine(Number(v))}
-            options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }))}
-            style={{ width: 90 }}
-            value={String(perLine)}
-          />
-        </Row>
         <Row
           sub="Checks each take for skipped words and early endings and redoes it. A little slower."
           title="Guard against skips and early endings"

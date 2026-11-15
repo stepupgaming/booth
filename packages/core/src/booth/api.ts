@@ -119,6 +119,14 @@ export interface Take {
   via: string;
   /** Only on a rendered script: Rust leaves it out when it's empty. */
   parts?: ScriptLine[];
+  /** Sampling temperature, when the take didn't use Zyphra's default. */
+  temperature?: number | null;
+  /** How close the take sounds to the voice (cosine of voiceprints), when Booth checked. */
+  voice_match?: number | null;
+  /** How many times Booth made this take again because it sounded unlike the voice. */
+  redone?: number;
+  /** Still unlike the voice after the retries; this was the closest try. */
+  drifted?: boolean;
   starred: boolean;
   path: string;
 }
@@ -196,6 +204,7 @@ export const api = {
     mode?: Mode | null;
     controls?: Record<string, number>;
     seed?: number | null;
+    temperature?: number | null;
   }) => invoke<Take>("speak", { a }),
   renderScript: (lines: ScriptLine[], gapMs?: number) =>
     invoke<Take>("render_script", { lines, gapMs }),

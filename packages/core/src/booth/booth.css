@@ -429,6 +429,57 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.32);
   color: #fff;
 }
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.stepper .btn {
+  min-width: 34px;
+  justify-content: center;
+}
+.stepper-value {
+  min-width: 62px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.line-pick {
+  all: unset;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  -webkit-tap-highlight-color: transparent;
+}
+.fold {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 32px;
+}
+.fold:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.fold-chev {
+  width: 12px;
+  font-size: 12px;
+  color: var(--b-text-2);
+}
+.fold-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--b-text-2);
+}
+.fold-count::before {
+  content: "· ";
+}
 .link {
   all: unset;
   cursor: pointer;

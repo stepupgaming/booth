@@ -36,6 +36,9 @@ pub struct Control {
     /// Works only in Shapeable mode (moves the speaker embedding).
     #[serde(default)]
     pub shapeable_only: bool,
+    /// `[dose, identity similarity]` points: how far each dose moves the voice from itself.
+    #[serde(default)]
+    pub identity: Option<Vec<[f64; 2]>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
