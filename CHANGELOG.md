@@ -21,7 +21,10 @@ Each version starts with a `## <version> (<date>)` heading. A release candidate 
   own file, and choose the pause between lines and between paragraphs.
 - **Fix one line.** Tap a line to change its words or redo it. Only that line is made again.
 - **On phones,** a script keeps going with the screen off, and Share sends the voiceover and
-  captions straight to CapCut, Drive or a chat.
+  captions straight to CapCut, Drive or a chat. The notification shows which line it's on.
+- Phones: the Back button now sends Booth to the background instead of closing it, so a script
+  being made keeps going. The tab bar steps aside while the keyboard is up, and voices no longer
+  take minutes to appear when Booth was closed while starting.
 - **For AI assistants:** booth-mcp has `make_script`, `script_status` and `redo_script_line`, so
   Claude can voice a whole script and hand back the voiceover and captions.
 - Fixed: cloning failed with "could not decode the reference audio" on computers without

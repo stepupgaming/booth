@@ -1,9 +1,12 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
 import { accelWhere, api, errText } from "@workspace/core/booth/api";
 import { useBooth, type View } from "@workspace/core/booth/store";
 import { Backdrop, Brand, Icon, useToast } from "@workspace/core/booth/ui";
+import { type ReactNode, useEffect, useState } from "react";
+
+const LINE_BREAK = /\r?\n/;
+const MARKS = /\*\*|`/g;
 
 /**
  * The release's notes (its CHANGELOG.md section) as plain items: one per "- " line, with
@@ -11,8 +14,8 @@ import { Backdrop, Brand, Icon, useToast } from "@workspace/core/booth/ui";
  */
 export function noteItems(notes: string | null | undefined): string[] {
   const items: string[] = [];
-  for (const line of (notes ?? "").split(/\r?\n/)) {
-    const text = line.trim().replace(/\*\*|`/g, "");
+  for (const line of (notes ?? "").split(LINE_BREAK)) {
+    const text = line.trim().replace(MARKS, "");
     if (line.startsWith("- ")) {
       items.push(text.slice(2));
     } else if (text && items.length) {
@@ -190,13 +193,55 @@ function EngineCard() {
   );
 }
 
+/**
+ * True while a phone's on-screen keyboard is up: a text field has focus and the visible area is
+ * well under its tallest height. Phones shrink the page for the keyboard, so without this the tab
+ * bar would ride on top of the keyboard and cover what you're typing into.
+ */
+function useKeyboardOpen(): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    let tallest = vv?.height ?? window.innerHeight;
+    let width = window.innerWidth;
+    const update = () => {
+      const h = vv?.height ?? window.innerHeight;
+      if (window.innerWidth !== width) {
+        width = window.innerWidth; // turned the phone: start over
+        tallest = h;
+      }
+      tallest = Math.max(tallest, h);
+      const el = document.activeElement;
+      const typing =
+        el instanceof HTMLTextAreaElement ||
+        (el instanceof HTMLInputElement &&
+          !["button", "checkbox", "radio", "range", "file"].includes(
+            el.type
+          )) ||
+        (el instanceof HTMLElement && el.isContentEditable);
+      setOpen(typing && h < tallest * 0.8);
+    };
+    const later = () => setTimeout(update, 50);
+    (vv ?? window).addEventListener("resize", update);
+    document.addEventListener("focusin", later);
+    document.addEventListener("focusout", later);
+    return () => {
+      (vv ?? window).removeEventListener("resize", update);
+      document.removeEventListener("focusin", later);
+      document.removeEventListener("focusout", later);
+    };
+  }, []);
+  return open;
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const view = useBooth((s) => s.view);
   const go = useBooth((s) => s.go);
+  const keyboard = useKeyboardOpen();
   return (
     <div className="booth">
       <Backdrop />
-      <div className="b-shell">
+      <div className={keyboard ? "b-shell kb-open" : "b-shell"}>
         <nav aria-label="Main" className="b-nav glass">
           <div style={{ padding: "2px 10px 22px" }}>
             <Brand />

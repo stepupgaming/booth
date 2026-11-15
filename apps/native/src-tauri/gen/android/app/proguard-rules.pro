@@ -20,6 +20,7 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 # Rust calls these by name over JNI (see android_work in src/lib.rs), so R8 must keep them.
--keep class com.nofacetube.booth.RenderService { public static void set(android.content.Context, boolean); }
+-keep class com.nofacetube.booth.RenderService { public static <methods>; }
+-keep class com.nofacetube.booth.Share { public static <methods>; }
 -keep class com.nofacetube.booth.RenderService$Companion { *; }
 -keep class com.nofacetube.booth.MainActivity$Companion { *; }

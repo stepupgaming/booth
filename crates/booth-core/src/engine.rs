@@ -150,13 +150,23 @@ pub async fn ensure(who: &str) -> Result<Zonos> {
     let deadline = Instant::now() + Duration::from_secs(200);
     loop {
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
-            Ok(_) => break,
+            Ok(mut f) => {
+                // Our pid, so a marker left by a process that died mid-start (on a phone, Back
+                // during the first seconds ends the app) is cleared at once, not after 200 s.
+                let _ = std::io::Write::write_all(&mut f, std::process::id().to_string().as_bytes());
+                break;
+            }
             Err(_) => {
-                // Left over from a crash: a start never takes this long.
-                let stale = std::fs::metadata(&marker)
-                    .and_then(|m| m.modified())
-                    .map(|t| t.elapsed().unwrap_or_default() > Duration::from_secs(200))
-                    .unwrap_or(true);
+                // Left over from a crash: its starter is gone, or a start never takes this long.
+                let starter_gone = std::fs::read_to_string(&marker)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .is_some_and(|pid| pid != std::process::id() && !crate::diag::pid_alive(pid));
+                let stale = starter_gone
+                    || std::fs::metadata(&marker)
+                        .and_then(|m| m.modified())
+                        .map(|t| t.elapsed().unwrap_or_default() > Duration::from_secs(200))
+                        .unwrap_or(true);
                 if stale {
                     std::fs::remove_file(&marker).ok();
                     continue;

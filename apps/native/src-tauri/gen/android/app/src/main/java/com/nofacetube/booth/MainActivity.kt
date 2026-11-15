@@ -28,6 +28,16 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /**
+   * Back on Booth's own page sends it to the background instead of closing it. Closing ends the
+   * whole process (Tauri exits with its last window), which would stop a script that is still
+   * being made and leave the engine's start half done.
+   */
+  @Deprecated("Called by WryActivity's back callback once the page has no history left")
+  override fun onBackPressed() {
+    moveTaskToBack(true)
+  }
+
   companion object {
     private var current: WeakReference<MainActivity>? = null
 

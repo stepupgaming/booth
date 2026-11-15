@@ -938,6 +938,9 @@ pre.code {
     gap: 2px;
     border-radius: 18px;
   }
+  .kb-open .b-nav {
+    display: none;
+  }
   .b-nav > :not(button),
   .wide-only {
     display: none;
