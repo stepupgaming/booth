@@ -164,22 +164,44 @@ pub fn delete(id: &str) -> Result<()> {
 
 /// Join WAV files (same format) with `gap_ms` of silence between them.
 pub fn concat_wavs(parts: &[Vec<u8>], gap_ms: u32) -> Result<Vec<u8>> {
-    let mut spec = None;
+    let gaps = vec![gap_ms; parts.len()];
+    Ok(concat_timed(parts, &gaps)?.0)
+}
+
+/// Join WAV files with a pause before each one (`gaps_ms[i]` before part `i`; the first is
+/// ignored), and say where each part landed: `(start, seconds)`, for captions.
+pub fn concat_timed(parts: &[Vec<u8>], gaps_ms: &[u32]) -> Result<(Vec<u8>, Vec<(f64, f64)>)> {
+    let mut spec: Option<hound::WavSpec> = None;
     let mut samples: Vec<i16> = Vec::new();
+    let mut spans = Vec::with_capacity(parts.len());
     for (i, wav) in parts.iter().enumerate() {
         let mut r = hound::WavReader::new(Cursor::new(wav)).context("reading a line's audio")?;
         let s = r.spec();
         let spec = *spec.get_or_insert(s);
+        if s.sample_rate != spec.sample_rate || s.channels != spec.channels {
+            anyhow::bail!("line {} has a different audio format", i + 1);
+        }
+        let frame = spec.channels.max(1) as usize;
         if i > 0 {
-            let gap = (spec.sample_rate as u64 * gap_ms as u64 / 1000) as usize * spec.channels as usize;
+            let gap_ms = gaps_ms.get(i).copied().unwrap_or(0) as u64;
+            let gap = (spec.sample_rate as u64 * gap_ms / 1000) as usize * frame;
             samples.extend(std::iter::repeat_n(0i16, gap));
         }
+        let before = samples.len();
         match s.sample_format {
-            hound::SampleFormat::Int => samples.extend(r.samples::<i16>().filter_map(|x| x.ok())),
+            hound::SampleFormat::Int if s.bits_per_sample <= 16 => {
+                samples.extend(r.samples::<i16>().filter_map(|x| x.ok()))
+            }
+            hound::SampleFormat::Int => {
+                let shift = s.bits_per_sample - 16;
+                samples.extend(r.samples::<i32>().filter_map(|x| x.ok()).map(|x| (x >> shift) as i16))
+            }
             hound::SampleFormat::Float => samples.extend(
                 r.samples::<f32>().filter_map(|x| x.ok()).map(|x| (x.clamp(-1.0, 1.0) * 32767.0) as i16),
             ),
         }
+        let rate = spec.sample_rate as f64 * frame as f64;
+        spans.push((before as f64 / rate, (samples.len() - before) as f64 / rate));
     }
     let mut spec = spec.context("no audio")?;
     spec.bits_per_sample = 16;
@@ -192,5 +214,5 @@ pub fn concat_wavs(parts: &[Vec<u8>], gap_ms: u32) -> Result<Vec<u8>> {
         }
         w.finalize()?;
     }
-    Ok(out.into_inner())
+    Ok((out.into_inner(), spans))
 }

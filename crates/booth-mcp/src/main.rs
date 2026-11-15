@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use booth_core::{
-    engine, models, paths, settings,
+    batch, engine, models, paths, settings,
     studio::{self, SpeakOptions},
     takes::{self, ScriptLine, Take},
     voices::{self, Consent, Voice, VoiceKind},
@@ -25,6 +25,9 @@ Every result is a WAV file saved in Booth's takes folder; give the user the file
 Pick a voice with list_voices (call it before the first speak). Exact voices sound closest to their clip \
 but can't be reshaped; Shapeable voices accept controls (see list_controls). \
 For several lines or several speakers, use render_script instead of many speak calls. \
+For a whole script the user pasted or wrote (narration, a YouTube or TikTok voiceover, dialogue with NAME: labels), \
+use make_script: it leaves out notes like [B-roll] and (SFX), gives each speaker a voice, and returns one voiceover \
+WAV plus captions (.srt). It also shows up in the Booth app's Script page. \
 create_voice clones a real person's voice: only use it when the user asks, only with a clip of themselves \
 or of someone who agreed, and only if Booth's settings allow it.";
 
@@ -75,6 +78,46 @@ struct ScriptArgs {
     /// Silence between lines in milliseconds (default 350).
     #[serde(default)]
     gap_ms: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct MakeScriptArgs {
+    /// The whole script as written. Lines may start with a speaker label ("NARRATOR:", "Host:");
+    /// headings, [bracketed] and (SFX ...) notes, timestamps and markdown are left out, and long
+    /// paragraphs are split at sentence ends. Blank lines mark paragraphs (a longer pause).
+    script: String,
+    /// Voice per speaker label, label -> voice id or name from list_voices, e.g. {"NARRATOR": "Rupert", "GUEST": "Maya"}.
+    /// Use "" for lines without a label.
+    #[serde(default)]
+    voices: BTreeMap<String, String>,
+    /// Voice for every speaker not in `voices`. Default: the voice chosen in Booth.
+    #[serde(default)]
+    voice: Option<String>,
+    /// Pause between lines in ms (default 250) and before a new paragraph (default 600).
+    #[serde(default)]
+    gap_ms: Option<u32>,
+    #[serde(default)]
+    paragraph_gap_ms: Option<u32>,
+    /// Also save each line as its own WAV (default false).
+    #[serde(default)]
+    line_files: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ScriptStatusArgs {
+    /// The script id from make_script.
+    id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct RedoLineArgs {
+    /// The script id from make_script.
+    id: String,
+    /// Line number, counting from 1 as make_script lists them.
+    line: usize,
+    /// New words for the line. Leave out to make the same words again (a new take).
+    #[serde(default)]
+    text: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -164,6 +207,96 @@ fn take_json(t: &Take) -> Value {
         "redone": t.redone,
         "sounds_off": t.drifted,
     })
+}
+
+/// How long a script tool waits before answering with progress (Claude's tool calls time out).
+const SCRIPT_WAIT: Duration = Duration::from_secs(100);
+
+fn script_json(j: &batch::Job, out: Option<&batch::Exported>) -> Value {
+    let done = j.lines.iter().filter(|l| l.state == batch::LineState::Done).count();
+    let failed: Vec<Value> = j
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.state == batch::LineState::Failed)
+        .map(|(i, l)| json!({ "line": i + 1, "text": l.text, "error": l.error }))
+        .collect();
+    let status = if done == j.lines.len() {
+        "done"
+    } else if j.running {
+        "making"
+    } else if failed.is_empty() {
+        "stopped"
+    } else {
+        "failed"
+    };
+    let mut v = json!({
+        "id": j.id,
+        "title": j.title,
+        "status": status,
+        "lines_done": done,
+        "lines_total": j.lines.len(),
+        "lines": j.lines.iter().enumerate().map(|(i, l)| json!({
+            "line": i + 1,
+            "speaker": l.speaker,
+            "voice": l.voice_name,
+            "text": l.text,
+            "seconds": (l.seconds * 10.0).round() / 10.0,
+            "sounds_off": l.drifted,
+        })).collect::<Vec<_>>(),
+        "left_out": j.skipped,
+    });
+    if !failed.is_empty() {
+        v["failed"] = json!(failed);
+    }
+    if let Some(o) = out {
+        v["voiceover"] = json!(o.voiceover.as_ref().map(|p| p.display().to_string()));
+        v["captions"] = json!(o.captions.as_ref().map(|p| p.display().to_string()));
+        if !o.lines.is_empty() {
+            v["line_files"] = json!(o.lines.iter().map(|p| p.display().to_string()).collect::<Vec<_>>());
+        }
+        v["seconds"] = json!((o.seconds * 10.0).round() / 10.0);
+        v["folder"] = json!(o.folder.display().to_string());
+    } else if status == "making" {
+        v["next"] = json!("Still making. Call script_status with this id to wait for the rest.");
+    }
+    v
+}
+
+/// Make a script's waiting lines in the background, wait up to `SCRIPT_WAIT`, and export once
+/// every line is made.
+async fn make_and_report(z: Zonos, id: &str, o: &batch::ExportOptions) -> Result<CallToolResult, ErrorData> {
+    let job = batch::get(id).map_err(fail)?;
+    let waiting = job.lines.iter().any(|l| l.state == batch::LineState::Waiting);
+    let mut task = None;
+    if waiting && !job.running {
+        let id = id.to_string();
+        task = Some(tokio::spawn(async move { batch::run(&z, &id, |_| {}).await }));
+    }
+    let start = std::time::Instant::now();
+    loop {
+        if task.as_ref().is_some_and(|t| t.is_finished()) {
+            if let Some(t) = task.take() {
+                match t.await {
+                    Ok(Err(e)) => return tool_error(format!("{e:#}")),
+                    Err(e) => return tool_error(format!("making the script stopped: {e}")),
+                    Ok(Ok(_)) => {}
+                }
+            }
+        }
+        let job = batch::get(id).map_err(fail)?;
+        let all_done = job.lines.iter().all(|l| l.state == batch::LineState::Done);
+        if all_done {
+            return match batch::export(id, o) {
+                Ok(out) => ok_json(script_json(&batch::get(id).map_err(fail)?, Some(&out))),
+                Err(e) => tool_error(format!("{e:#}")),
+            };
+        }
+        if (!job.running && task.is_none()) || start.elapsed() >= SCRIPT_WAIT {
+            return ok_json(script_json(&job, None));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 fn parse_mode(m: Option<&str>) -> Result<Option<SpeakerMode>, String> {
@@ -284,6 +417,66 @@ impl Booth {
     }
 
     #[tool(
+        description = "Make a voiceover from a whole script: Booth splits it into lines, leaves out notes ([B-roll], (SFX), headings), speaks each line with its speaker's voice, and returns one WAV plus captions (.srt) with matching timings. Long scripts keep going in the background: if status is \"making\", call script_status with the id.",
+        annotations(title = "Make a script", read_only_hint = false, destructive_hint = false)
+    )]
+    async fn make_script(&self, Parameters(a): Parameters<MakeScriptArgs>) -> Result<CallToolResult, ErrorData> {
+        let z = match engine_ready().await {
+            Ok(z) => z,
+            Err(e) => return tool_error(e),
+        };
+        let fallback = match studio::pick_voice(&z, a.voice.as_deref()).await {
+            Ok(v) => v.id,
+            Err(e) => return tool_error(format!("{e:#}")),
+        };
+        let job = match batch::create(&z, &a.script, &a.voices, &fallback, "mcp").await {
+            Ok(j) => j,
+            Err(e) => return tool_error(format!("{e:#}")),
+        };
+        let mut o = batch::ExportOptions { lines: a.line_files, ..Default::default() };
+        if let Some(g) = a.gap_ms {
+            o.gap_ms = g.min(5000);
+        }
+        if let Some(g) = a.paragraph_gap_ms {
+            o.para_gap_ms = g.min(5000);
+        }
+        remember_options(&job.id, &o);
+        make_and_report(z, &job.id, &o).await
+    }
+
+    #[tool(
+        description = "Check on a script from make_script: waits for lines still being made (up to about 100 seconds), then returns the voiceover and captions paths once every line is done.",
+        annotations(title = "Script status", read_only_hint = false, destructive_hint = false)
+    )]
+    async fn script_status(&self, Parameters(a): Parameters<ScriptStatusArgs>) -> Result<CallToolResult, ErrorData> {
+        let z = match engine_ready().await {
+            Ok(z) => z,
+            Err(e) => return tool_error(e),
+        };
+        let o = options_for(&a.id);
+        make_and_report(z, &a.id, &o).await
+    }
+
+    #[tool(
+        description = "Make one line of a script again, with new words or as a fresh take, then rebuild the voiceover and captions.",
+        annotations(title = "Redo a script line", read_only_hint = false, destructive_hint = false)
+    )]
+    async fn redo_script_line(&self, Parameters(a): Parameters<RedoLineArgs>) -> Result<CallToolResult, ErrorData> {
+        if a.line == 0 {
+            return tool_error("line numbers start at 1");
+        }
+        let z = match engine_ready().await {
+            Ok(z) => z,
+            Err(e) => return tool_error(e),
+        };
+        if let Err(e) = batch::redo(&a.id, a.line - 1, a.text) {
+            return tool_error(format!("{e:#}"));
+        }
+        let o = options_for(&a.id);
+        make_and_report(z, &a.id, &o).await
+    }
+
+    #[tool(
         description = "Recent takes (made in the app or by Claude), newest first, with file paths.",
         annotations(title = "List takes", read_only_hint = true)
     )]
@@ -393,6 +586,18 @@ impl ServerHandler for Booth {
             .with_server_info(info)
             .with_instructions(INSTRUCTIONS)
     }
+}
+
+/// Export settings per script made in this session, so script_status and redo_script_line export
+/// the same way make_script was asked to.
+static SCRIPT_OPTIONS: std::sync::Mutex<BTreeMap<String, batch::ExportOptions>> = std::sync::Mutex::new(BTreeMap::new());
+
+fn remember_options(id: &str, o: &batch::ExportOptions) {
+    SCRIPT_OPTIONS.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), o.clone());
+}
+
+fn options_for(id: &str) -> batch::ExportOptions {
+    SCRIPT_OPTIONS.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned().unwrap_or_default()
 }
 
 /// Claude runs this server for as long as it is open, so an engine started from here would hold

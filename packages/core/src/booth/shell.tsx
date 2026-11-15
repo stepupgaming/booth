@@ -5,7 +5,24 @@ import { accelWhere, api, errText } from "@workspace/core/booth/api";
 import { useBooth, type View } from "@workspace/core/booth/store";
 import { Backdrop, Brand, Icon, useToast } from "@workspace/core/booth/ui";
 
-/** "Booth 0.2.1 is ready", with a button that installs it and restarts. */
+/**
+ * The release's notes (its CHANGELOG.md section) as plain items: one per "- " line, with
+ * indented lines joined on, and the Markdown bold and code marks dropped.
+ */
+export function noteItems(notes: string | null | undefined): string[] {
+  const items: string[] = [];
+  for (const line of (notes ?? "").split(/\r?\n/)) {
+    const text = line.trim().replace(/\*\*|`/g, "");
+    if (line.startsWith("- ")) {
+      items.push(text.slice(2));
+    } else if (text && items.length) {
+      items[items.length - 1] += ` ${text}`;
+    }
+  }
+  return items;
+}
+
+/** "Booth 0.2.1 is ready", what's new in it, and a button that installs it and restarts. */
 function UpdateCard() {
   const update = useBooth((s) => s.update);
   const toast = useToast();
@@ -13,9 +30,14 @@ function UpdateCard() {
   if (!update) {
     return null;
   }
+  const items = noteItems(update.notes);
   const install = async () => {
     setPct(0);
-    const un = await api.onUpdateProgress((p) => setPct(p.total_bytes ? Math.round((p.done_bytes / p.total_bytes) * 100) : null));
+    const un = await api.onUpdateProgress((p) =>
+      setPct(
+        p.total_bytes ? Math.round((p.done_bytes / p.total_bytes) * 100) : null
+      )
+    );
     try {
       await api.installUpdate();
     } catch (e) {
@@ -41,9 +63,42 @@ function UpdateCard() {
         gap: 8,
       }}
     >
-      <div style={{ color: "var(--b-text)", fontWeight: 500 }}>Booth {update.version} is ready</div>
-      <div>{pct == null ? "Installs in a few seconds and reopens Booth." : `Downloading… ${pct}%`}</div>
-      <button className="btn ghost sm" disabled={pct != null} onClick={install} type="button">
+      <div style={{ color: "var(--b-text)", fontWeight: 500 }}>
+        Booth {update.version} is ready
+      </div>
+      {items.length > 0 && (
+        <details>
+          <summary style={{ cursor: "pointer", color: "var(--b-text)" }}>
+            What's new
+          </summary>
+          <ul
+            style={{
+              margin: "6px 0 0",
+              paddingLeft: 16,
+              maxHeight: 220,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            {items.map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <div>
+        {pct == null
+          ? "Installs in a few seconds and reopens Booth."
+          : `Downloading… ${pct}%`}
+      </div>
+      <button
+        className="btn ghost sm"
+        disabled={pct != null}
+        onClick={install}
+        type="button"
+      >
         {pct == null ? "Update and restart" : "Updating…"}
       </button>
     </div>
@@ -52,6 +107,7 @@ function UpdateCard() {
 
 const NAV: { view: View; label: string; short?: string; icon: ReactNode }[] = [
   { view: "studio", label: "Studio", icon: Icon.studio },
+  { view: "script", label: "Script", icon: Icon.script },
   { view: "library", label: "Library", icon: Icon.library },
   { view: "voices", label: "Voices", icon: Icon.voices },
   { view: "create", label: "Create a voice", short: "Create", icon: Icon.mic },
@@ -64,7 +120,8 @@ function EngineCard() {
   const claude = useBooth((s) => s.claude);
   const busy = useBooth((s) => s.busy);
   const state = overview?.engine.state;
-  const hasGpuEngine = overview?.packs.some((p) => p.pack === "gpu_engine" && p.present) ?? false;
+  const hasGpuEngine =
+    overview?.packs.some((p) => p.pack === "gpu_engine" && p.present) ?? false;
   const running = state === "running";
   let title = "Engine asleep";
   let dot = "dot-live off";
@@ -80,8 +137,13 @@ function EngineCard() {
   const engine = overview?.engine;
   const accel = engine?.state === "running" ? engine.accel : undefined;
   // The chip it runs on: the graphics card when it uses one, else the processor.
-  const onGpu = accel ? accel !== "cpu" : system?.gpu_kind === "apple" || (system?.gpu_kind === "nvidia" && hasGpuEngine);
-  const chip = onGpu ? system?.gpu?.replace(/^NVIDIA (GeForce )?/, "") : system?.cpu?.replace(/\s+\d+-Core Processor$/, "");
+  const onGpu = accel
+    ? accel !== "cpu"
+    : system?.gpu_kind === "apple" ||
+      (system?.gpu_kind === "nvidia" && hasGpuEngine);
+  const chip = onGpu
+    ? system?.gpu?.replace(/^NVIDIA (GeForce )?/, "")
+    : system?.cpu?.replace(/\s+\d+-Core Processor$/, "");
   const update = useBooth((s) => s.update);
   return (
     <div
@@ -96,18 +158,34 @@ function EngineCard() {
         lineHeight: 1.6,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--b-text)", fontWeight: 500 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          color: "var(--b-text)",
+          fontWeight: 500,
+        }}
+      >
         <span className={dot} />
         {title}
       </div>
-      {running || busy > 0 ? <div>On the {accelWhere(accel)}</div> : <div>Wakes up on your first line</div>}
+      {running || busy > 0 ? (
+        <div>On the {accelWhere(accel)}</div>
+      ) : (
+        <div>Wakes up on your first line</div>
+      )}
       {chip ? (
         <div>
           {chip}
-          {onGpu && system?.gpu_kind === "nvidia" && system.vram_gb ? ` · ${Math.round(system.vram_gb)} GB` : ""}
+          {onGpu && system?.gpu_kind === "nvidia" && system.vram_gb
+            ? ` · ${Math.round(system.vram_gb)} GB`
+            : ""}
         </div>
       ) : null}
-      <div>{claude?.connected ? "Connected to Claude" : "Claude not connected yet"}</div>
+      <div>
+        {claude?.connected ? "Connected to Claude" : "Claude not connected yet"}
+      </div>
     </div>
   );
 }

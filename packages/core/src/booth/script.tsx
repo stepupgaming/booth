@@ -1,0 +1,1226 @@
+"use client";
+
+import {
+  api,
+  errText,
+  fileUrl,
+  type ParsedScript,
+  type ScriptExportOptions,
+  type ScriptJob,
+  type ScriptJobLine,
+  type Voice,
+} from "@workspace/core/booth/api";
+import { isPhone, useBooth } from "@workspace/core/booth/store";
+import {
+  Dropdown,
+  Icon,
+  PlayButton,
+  playAll,
+  usePref,
+  useToast,
+} from "@workspace/core/booth/ui";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+
+const eyebrow = {
+  fontSize: 12,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase" as const,
+};
+
+const srOnly = {
+  position: "absolute" as const,
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+};
+
+const andList = (xs: unknown[]) => {
+  const w = xs.filter((x): x is string => typeof x === "string" && !!x);
+  return w.length > 1
+    ? `${w.slice(0, -1).join(", ")} and ${w.at(-1)}`
+    : (w[0] ?? "nothing");
+};
+const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
+/** About how long a line takes to say (2.6 words a second, an easy voiceover pace). */
+const estimate = (lines: { text: string }[]) =>
+  lines.reduce((n, l) => n + words(l.text), 0) / 2.6;
+const secs = (s: number) =>
+  s >= 90
+    ? `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`
+    : `${Math.round(s)} s`;
+const plural = (n: number, one: string, many = `${one}s`) =>
+  `${n} ${n === 1 ? one : many}`;
+const speakerLabel = (s: string) => s || "Every line";
+
+/** A voice per speaker: the voice picked in the Studio first, then others in its language. */
+function pickVoices(
+  speakers: string[],
+  voices: Voice[],
+  first: string | null,
+  keep: Record<string, string>
+) {
+  const out: Record<string, string> = {};
+  const lead = voices.find((v) => v.id === first) ?? voices[0];
+  const pool = [
+    ...voices.filter((v) => v.id !== lead?.id && v.language === lead?.language),
+    ...voices.filter((v) => v.id !== lead?.id && v.language !== lead?.language),
+  ];
+  for (const [i, s] of speakers.entries()) {
+    const kept = keep[s];
+    if (kept && voices.some((v) => v.id === kept)) {
+      out[s] = kept;
+      continue;
+    }
+    const used = new Set(Object.values(out));
+    const next = i === 0 ? lead : (pool.find((v) => !used.has(v.id)) ?? lead);
+    if (next) {
+      out[s] = next.id;
+    }
+  }
+  return out;
+}
+
+// ---------- pasting ----------
+
+function PasteView({
+  onStarted,
+  recent,
+}: {
+  onStarted: (j: ScriptJob) => void;
+  recent: ScriptJob[];
+}) {
+  const voices = useBooth((s) => s.voices);
+  const voiceId = useBooth((s) => s.voiceId);
+  const system = useBooth((s) => s.system);
+  const work = useBooth((s) => s.work);
+  const phone = isPhone(system);
+  const toast = useToast();
+  const [text, setText] = usePref("booth.script.draft", "");
+  const [chosen, setChosen] = usePref<Record<string, string>>(
+    "booth.script.voices",
+    {}
+  );
+  const [parsed, setParsed] = useState<ParsedScript | null>(null);
+  const [starting, setStarting] = useState(false);
+  const file = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!text.trim()) {
+      setParsed(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      api
+        .scriptParse(text)
+        .then(setParsed)
+        .catch(() => setParsed(null));
+    }, 180);
+    return () => clearTimeout(t);
+  }, [text]);
+
+  const speakers = parsed?.speakers.map(([s]) => s) ?? [];
+  const map = useMemo(
+    () =>
+      pickVoices(speakers.length ? speakers : [""], voices, voiceId, chosen),
+    [speakers.join("\n"), voices, voiceId, chosen]
+  );
+  const lines = parsed?.lines ?? [];
+  const options = voices.map((v) => ({
+    value: v.id,
+    label: v.name,
+    hint: v.kind === "default" ? undefined : "yours",
+  }));
+
+  const openTxt = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) {
+      setText(await f.text());
+    }
+  };
+  const paste = async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      if (t.trim()) {
+        setText(t);
+        return;
+      }
+    } catch {
+      // some web views don't allow reading the clipboard
+    }
+    toast.bad("Press and hold in the box, then choose Paste.");
+  };
+  const start = async () => {
+    const first = voices[0]?.id ?? "";
+    setStarting(true);
+    try {
+      const job = await work(() =>
+        api.scriptCreate(text, map, map[""] ?? first)
+      );
+      onStarted(job);
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const summary = (
+    <>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+        <div
+          className="tile"
+          style={{
+            flex: "1 1 90px",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          <span className="mono" style={{ fontSize: 20 }}>
+            {lines.length}
+          </span>
+          <span className="faint small">
+            {lines.length === 1 ? "line" : "lines"}
+          </span>
+        </div>
+        <div
+          className="tile"
+          style={{
+            flex: "1 1 90px",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          <span className="mono" style={{ fontSize: 20 }}>
+            ~{secs(estimate(lines))}
+          </span>
+          <span className="faint small">of audio</span>
+        </div>
+        <div
+          className="tile"
+          style={{
+            flex: "1 1 90px",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          <span className="mono" style={{ fontSize: 20 }}>
+            {parsed?.skipped.length ?? 0}
+          </span>
+          <span className="faint small">notes left out</span>
+        </div>
+      </div>
+
+      <fieldset
+        style={{
+          border: "none",
+          margin: 0,
+          padding: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        <legend className="faint" style={{ ...eyebrow, padding: "0 0 10px" }}>
+          Voices
+        </legend>
+        {(speakers.length ? speakers : [""]).map((s) => {
+          const n = parsed?.speakers.find(([x]) => x === s)?.[1] ?? 0;
+          return (
+            <div
+              className="tile"
+              key={s}
+              style={{
+                padding: "10px 14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 14 }}>
+                <span
+                  className="mono"
+                  style={{ fontSize: 12, color: "var(--b-text-2)" }}
+                >
+                  {speakerLabel(s)}
+                </span>{" "}
+                <span className="faint small">· {plural(n, "line")}</span>
+              </span>
+              <Dropdown
+                label={`Voice for ${speakerLabel(s)}`}
+                onChange={(v) => setChosen({ ...chosen, [s]: v })}
+                options={options}
+                style={{ minWidth: 170 }}
+                value={map[s] ?? ""}
+              />
+            </div>
+          );
+        })}
+        {speakers.length <= 1 ? (
+          <div className="faint small" style={{ lineHeight: 1.5 }}>
+            Lines that start with a name, like NARRATOR: or Host:, get that
+            speaker’s own voice.
+          </div>
+        ) : null}
+      </fieldset>
+
+      {parsed?.skipped.length ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="faint" style={eyebrow}>
+            Left out, not spoken
+          </div>
+          <div
+            className="mono muted"
+            style={{
+              fontSize: 12,
+              lineHeight: 1.8,
+              maxHeight: 140,
+              overflowY: "auto",
+              wordBreak: "break-word",
+            }}
+          >
+            {parsed.skipped.map((s, i) => (
+              <div key={`${i}-${s}`}>{s}</div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          marginTop: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        <button
+          className="btn primary"
+          disabled={!lines.length || starting || !voices.length}
+          onClick={start}
+          style={{ justifyContent: "center", width: "100%" }}
+          type="button"
+        >
+          {starting ? <span className="spinner" /> : null}
+          {lines.length
+            ? `Make all ${plural(lines.length, "line")}`
+            : "Paste a script first"}
+        </button>
+        <div className="faint small" style={{ textAlign: "center" }}>
+          You can redo any single line afterwards.
+        </div>
+      </div>
+    </>
+  );
+
+  const box = (
+    <>
+      <label htmlFor="b-script" style={srOnly}>
+        Your script
+      </label>
+      <textarea
+        className="field mono"
+        id="b-script"
+        onChange={(e) => setText(e.target.value)}
+        placeholder={
+          "NARRATOR: You walk outside, it's minus ten…\n\n[B-roll: snowy street]\n\nNARRATOR: It isn't broken."
+        }
+        spellCheck={false}
+        style={{
+          flex: 1,
+          minHeight: phone ? 180 : 420,
+          resize: phone ? "none" : "vertical",
+          padding: phone ? 14 : 16,
+          borderRadius: 14,
+          fontSize: phone ? 12.5 : 13,
+          lineHeight: 1.7,
+          color: "var(--b-text-2)",
+        }}
+        value={text}
+      />
+      <input
+        accept=".txt,.md,.srt,.fountain,text/plain"
+        hidden
+        onChange={openTxt}
+        ref={file}
+        type="file"
+      />
+    </>
+  );
+
+  if (phone) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          minHeight: "100%",
+        }}
+      >
+        <header style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <h1 className="h1" style={{ margin: 0, fontSize: 26 }}>
+            Script
+          </h1>
+          <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
+            Paste the whole thing. Booth makes every line.
+          </div>
+        </header>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            className="btn primary"
+            onClick={paste}
+            style={{ flex: 1, justifyContent: "center" }}
+            type="button"
+          >
+            Paste
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => file.current?.click()}
+            style={{ flex: 1, justifyContent: "center" }}
+            type="button"
+          >
+            Open a .txt
+          </button>
+        </div>
+        {box}
+        <section
+          aria-label="What Booth will make"
+          className="glass"
+          style={{
+            padding: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+            borderRadius: 18,
+          }}
+        >
+          {summary}
+        </section>
+        <Recent onOpen={onStarted} recent={recent} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <header style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="faint" style={eyebrow}>
+          Script
+        </div>
+        <h1 className="h1" style={{ margin: 0, fontSize: 28 }}>
+          Paste your whole script
+        </h1>
+        <div
+          className="muted"
+          style={{ fontSize: 14, maxWidth: 640, lineHeight: 1.55 }}
+        >
+          Booth splits it into lines, leaves out notes like [B-roll] and (SFX),
+          and makes every line in one go. Lines starting with a name, like
+          NARRATOR:, get that speaker’s voice.
+        </div>
+      </header>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 22,
+          alignItems: "stretch",
+        }}
+      >
+        <section
+          aria-label="Your script"
+          className="glass"
+          style={{
+            flex: "1 1 380px",
+            minWidth: 0,
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontSize: 15, fontWeight: 600 }}>Your script</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="btn ghost sm"
+                onClick={() => file.current?.click()}
+                type="button"
+              >
+                Open a .txt
+              </button>
+              <button
+                className="btn ghost sm"
+                disabled={!text}
+                onClick={() => setText("")}
+                type="button"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          {box}
+          <div className="faint small">
+            Long paragraphs are split at sentence ends.
+          </div>
+        </section>
+        <section
+          aria-label="What Booth will make"
+          className="glass"
+          style={{
+            flex: "1 1 380px",
+            minWidth: 0,
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            gap: 16,
+          }}
+        >
+          <h2 className="h2" style={{ margin: 0 }}>
+            What Booth will make
+          </h2>
+          {summary}
+        </section>
+      </div>
+      <Recent onOpen={onStarted} recent={recent} />
+    </div>
+  );
+}
+
+function Recent({
+  recent,
+  onOpen,
+}: {
+  recent: ScriptJob[];
+  onOpen: (j: ScriptJob) => void;
+}) {
+  if (!recent.length) {
+    return null;
+  }
+  return (
+    <section
+      aria-label="Recent scripts"
+      style={{ display: "flex", flexDirection: "column", gap: 8 }}
+    >
+      <div className="faint" style={eyebrow}>
+        Recent scripts
+      </div>
+      {recent.map((j) => {
+        const done = j.lines.filter((l) => l.state === "done").length;
+        return (
+          <button
+            className="tile line-pick"
+            key={j.id}
+            onClick={() => onOpen(j)}
+            style={{
+              padding: "10px 14px",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              textAlign: "left",
+            }}
+            type="button"
+          >
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {j.title}
+            </span>
+            <span className="faint small mono" style={{ flex: "none" }}>
+              {done === j.lines.length
+                ? plural(j.lines.length, "line")
+                : `${done} of ${j.lines.length} made`}
+            </span>
+          </button>
+        );
+      })}
+    </section>
+  );
+}
+
+// ---------- making and exporting ----------
+
+const GAPS = [
+  { value: "150", label: "Tight · 0.15 s" },
+  { value: "250", label: "Normal · 0.25 s" },
+  { value: "400", label: "Relaxed · 0.4 s" },
+];
+const PARA_GAPS = [
+  { value: "400", label: "0.4 s" },
+  { value: "600", label: "0.6 s" },
+  { value: "1000", label: "1 s" },
+];
+
+function LineRow({
+  job,
+  line,
+  i,
+  phone,
+}: {
+  job: ScriptJob;
+  line: ScriptJobLine;
+  i: number;
+  phone: boolean;
+}) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(line.text);
+  const src = line.state === "done" && line.path ? fileUrl(line.path) : null;
+  const redo = async (text?: string) => {
+    setEditing(false);
+    try {
+      await api.scriptRedo(job.id, i, text);
+    } catch (e) {
+      toast.bad(errText(e));
+    }
+  };
+  const making = line.state === "making";
+  const waiting = line.state === "waiting";
+  return (
+    <div
+      className={making ? "tile on" : "tile"}
+      style={{
+        padding: phone ? "10px 12px" : "12px 14px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+      }}
+    >
+      <span
+        className="mono"
+        style={{
+          color: "var(--b-fainter)",
+          fontSize: 12,
+          width: 18,
+          flex: "none",
+        }}
+      >
+        {String(i + 1).padStart(2, "0")}
+      </span>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+        }}
+      >
+        {phone ? null : (
+          <span className="faint small">
+            {line.speaker ? (
+              <>
+                <span className="mono">{line.speaker}</span> ·{" "}
+              </>
+            ) : null}
+            {line.voice_name}
+            {line.drifted ? (
+              <span className="warn"> · may not sound like the voice</span>
+            ) : null}
+          </span>
+        )}
+        {editing ? (
+          <input
+            aria-label={`Line ${i + 1}`}
+            autoFocus
+            className="field"
+            onBlur={() => setEditing(false)}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                redo(draft);
+              } else if (e.key === "Escape") {
+                setEditing(false);
+              }
+            }}
+            value={draft}
+          />
+        ) : (
+          <button
+            aria-label={`Edit line ${i + 1}: ${line.text}`}
+            className="line-pick"
+            disabled={making}
+            onClick={() => {
+              setDraft(line.text);
+              setEditing(true);
+            }}
+            style={{
+              fontSize: phone ? 14 : 15,
+              lineHeight: 1.45,
+              color: waiting ? "var(--b-muted)" : undefined,
+              ...(phone
+                ? {
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }
+                : {}),
+            }}
+            type="button"
+          >
+            {line.text}
+          </button>
+        )}
+        {line.state === "failed" ? (
+          <span className="warn small">
+            {line.error ?? "Couldn’t make this line."}
+          </span>
+        ) : null}
+      </div>
+      {making ? (
+        <span
+          className="small"
+          style={{
+            display: "inline-flex",
+            gap: 6,
+            alignItems: "center",
+            flex: "none",
+          }}
+        >
+          <span className="spinner" /> Making
+        </span>
+      ) : waiting ? (
+        <span className="faint small" style={{ flex: "none" }}>
+          Waiting
+        </span>
+      ) : (
+        <>
+          {line.state === "done" ? (
+            <span
+              className="mono small"
+              style={{ color: "var(--b-ok)", flex: "none" }}
+            >
+              {line.seconds.toFixed(1)} s
+            </span>
+          ) : null}
+          {src ? <PlayButton label={`line ${i + 1}`} src={src} /> : null}
+          {phone && line.state === "done" ? null : (
+            <button
+              aria-label={`Redo line ${i + 1}`}
+              className="btn ghost sm"
+              onClick={() => redo()}
+              style={{ flex: "none" }}
+              title="Make this line again"
+              type="button"
+            >
+              {Icon.redo}
+              {phone ? null : line.state === "failed" ? "Try again" : "Redo"}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
+  const system = useBooth((s) => s.system);
+  const phone = isPhone(system);
+  const toast = useToast();
+  const [gap, setGap] = usePref("booth.script.gap", "250");
+  const [paraGap, setParaGap] = usePref("booth.script.paraGap", "600");
+  const [wantVoiceover, setWantVoiceover] = usePref(
+    "booth.script.voiceover",
+    true
+  );
+  const [wantCaptions, setWantCaptions] = usePref(
+    "booth.script.captions",
+    true
+  );
+  const [wantLines, setWantLines] = usePref("booth.script.lines", false);
+  const [srt, setSrt] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  const n = job.lines.length;
+  const done = job.lines.filter((l) => l.state === "done").length;
+  const failed = job.lines.filter((l) => l.state === "failed").length;
+  const makingAt = job.lines.findIndex((l) => l.state === "making");
+  const allDone = done === n;
+  const seconds = job.lines.reduce((s, l) => s + l.seconds, 0);
+  const options: ScriptExportOptions = {
+    gap_ms: Number(gap),
+    para_gap_ms: Number(paraGap),
+    voiceover: wantVoiceover,
+    captions: wantCaptions,
+    lines: wantLines && !phone,
+  };
+  const hasParas = job.lines.some((l) => l.para);
+
+  useEffect(() => {
+    if (!allDone || phone) {
+      setSrt("");
+      return;
+    }
+    api
+      .scriptCaptions(job.id, options)
+      .then(setSrt)
+      .catch(() => setSrt(""));
+  }, [
+    allDone,
+    job.id,
+    gap,
+    paraGap,
+    phone,
+    job.lines.map((l) => `${l.version}`).join(),
+  ]);
+
+  const status = job.running
+    ? makingAt >= 0
+      ? `Making line ${makingAt + 1} of ${n}`
+      : "Starting…"
+    : allDone
+      ? `All ${plural(n, "line")} made`
+      : failed
+        ? `${plural(failed, "line")} didn’t work`
+        : `Stopped · ${done} of ${n} made`;
+
+  const exportNow = async () => {
+    setExporting(true);
+    try {
+      const out = await api.scriptExport(job.id, options);
+      if (phone) {
+        const files = [out.voiceover, out.captions].filter(
+          (p): p is string => !!p
+        );
+        await api.shareFiles(files, job.title);
+      } else {
+        toast.ok(
+          `Saved ${andList([out.voiceover && "the voiceover", out.captions && "captions", out.lines.length && "each line"])}`
+        );
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exported = job.exported;
+  const check = (on: boolean, set: (v: boolean) => void, label: string) => (
+    <label
+      style={{
+        display: "flex",
+        gap: 12,
+        alignItems: "center",
+        fontSize: 14,
+        minHeight: 32,
+        cursor: "pointer",
+      }}
+    >
+      <input
+        checked={on}
+        onChange={(e) => set(e.target.checked)}
+        style={{ width: 18, height: 18, margin: 0, accentColor: "#f0202a" }}
+        type="checkbox"
+      />
+      {label}
+    </label>
+  );
+  const nothingPicked = !(
+    options.voiceover ||
+    options.captions ||
+    options.lines
+  );
+
+  const exportPanel = (
+    <aside
+      aria-label={phone ? "When it’s done" : "Export"}
+      className="glass"
+      style={{
+        flex: "1 1 300px",
+        maxWidth: phone ? undefined : 380,
+        padding: phone ? 16 : 20,
+        borderRadius: phone ? 18 : undefined,
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        alignSelf: "flex-start",
+      }}
+    >
+      <div className="faint" style={eyebrow}>
+        {phone ? "When it’s done" : "Export"}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {check(
+          wantVoiceover,
+          setWantVoiceover,
+          "The whole voiceover, one file"
+        )}
+        {check(
+          wantCaptions,
+          setWantCaptions,
+          phone ? "Captions (.srt) for CapCut or YouTube" : "Captions (.srt)"
+        )}
+        {phone
+          ? null
+          : check(wantLines, setWantLines, "Each line as its own file")}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span className="faint small">Pause between lines</span>
+        <Dropdown
+          label="Pause between lines"
+          onChange={setGap}
+          options={GAPS}
+          value={gap}
+        />
+        {hasParas ? (
+          <>
+            <span className="faint small">Pause between paragraphs</span>
+            <Dropdown
+              label="Pause between paragraphs"
+              onChange={setParaGap}
+              options={PARA_GAPS}
+              value={paraGap}
+            />
+          </>
+        ) : null}
+      </div>
+      {srt ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="faint small">Captions preview</span>
+          <pre
+            className="mono"
+            style={{
+              margin: 0,
+              maxHeight: 180,
+              overflow: "auto",
+              fontSize: 11.5,
+              lineHeight: 1.55,
+              padding: 12,
+              borderRadius: 12,
+              background: "rgba(0,0,0,0.3)",
+              color: "var(--b-text-2)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {srt.split("\n\n").slice(0, 6).join("\n\n")}
+          </pre>
+        </div>
+      ) : null}
+      <button
+        className="btn primary"
+        disabled={!allDone || exporting || nothingPicked}
+        onClick={exportNow}
+        style={{ justifyContent: "center", width: "100%" }}
+        type="button"
+      >
+        {exporting ? <span className="spinner" /> : phone ? Icon.share : null}
+        {allDone
+          ? phone
+            ? "Share"
+            : "Export"
+          : phone
+            ? "Share when ready"
+            : `Export when all ${plural(n, "line")} are made`}
+      </button>
+      {exported && !phone ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="muted small" style={{ lineHeight: 1.5 }}>
+            Saved {secs(exported.seconds)} of audio. The voiceover is in your
+            Library too.
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {exported.voiceover ? (
+              <PlayButton
+                label="the voiceover"
+                src={fileUrl(exported.voiceover)}
+              />
+            ) : null}
+            <button
+              className="btn ghost sm"
+              onClick={() =>
+                api
+                  .reveal(exported.voiceover ?? exported.folder)
+                  .catch((e) => toast.bad(errText(e)))
+              }
+              type="button"
+            >
+              {Icon.folder} Show in folder
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </aside>
+  );
+
+  const madeSrcs = job.lines
+    .filter((l) => l.state === "done" && l.path)
+    .map((l) => fileUrl(l.path as string));
+
+  return (
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: phone ? 14 : 20 }}
+    >
+      <header
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            minWidth: 0,
+          }}
+        >
+          <div className="faint" style={eyebrow}>
+            Script
+          </div>
+          <h1
+            className="h1"
+            style={{ margin: 0, fontSize: phone ? 22 : 28, lineHeight: 1.25 }}
+          >
+            {job.title}
+          </h1>
+          <div className="muted small">
+            {plural(n, "line")} ·{" "}
+            {job.lines.reduce((s, l) => s + words(l.text), 0)} words ·{" "}
+            {allDone ? secs(seconds) : `~${secs(estimate(job.lines))}`}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {madeSrcs.length && !phone ? (
+            <button
+              className="btn ghost sm"
+              onClick={() => playAll(madeSrcs)}
+              type="button"
+            >
+              {Icon.play} Play all
+            </button>
+          ) : null}
+          <button className="btn ghost sm" onClick={onNew} type="button">
+            New script
+          </button>
+        </div>
+      </header>
+
+      <section
+        aria-label="Progress"
+        className="glass"
+        style={{
+          padding: "14px 18px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          borderRadius: 18,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <span aria-live="polite" style={{ fontWeight: 600 }}>
+            {status}
+          </span>
+          <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <span className="mono muted small">{done} done</span>
+            {job.running ? (
+              <button
+                className="btn ghost sm"
+                onClick={() => api.scriptStop().catch(() => undefined)}
+                type="button"
+              >
+                Stop
+              </button>
+            ) : allDone ? null : (
+              <button
+                className="btn primary sm"
+                onClick={() =>
+                  api.scriptRun(job.id).catch((e) => toast.bad(errText(e)))
+                }
+                type="button"
+              >
+                {failed ? "Try again" : "Make the rest"}
+              </button>
+            )}
+          </span>
+        </div>
+        <div
+          style={{
+            height: 6,
+            borderRadius: 3,
+            background: "rgba(255,255,255,0.08)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: `${(done / Math.max(n, 1)) * 100}%`,
+              height: "100%",
+              background: "var(--b-red-grad)",
+              transition: "width 300ms ease",
+            }}
+          />
+        </div>
+        {job.running ? (
+          <div className="muted small" style={{ lineHeight: 1.45 }}>
+            {phone
+              ? "Keeps going with the screen off. Booth shows a notification while it works."
+              : "Keeps going if you switch pages or use other apps."}
+          </div>
+        ) : null}
+      </section>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 16,
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+        }}
+      >
+        <section
+          aria-label="Lines"
+          style={{
+            flex: "999 1 480px",
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          {job.lines.map((l, i) => (
+            <div
+              key={`${i}-${l.version}`}
+              style={l.para && i > 0 ? { marginTop: 10 } : undefined}
+            >
+              <LineRow i={i} job={job} line={l} phone={phone} />
+            </div>
+          ))}
+          {job.skipped.length ? (
+            <details className="tile" style={{ padding: "10px 14px" }}>
+              <summary className="muted small" style={{ cursor: "pointer" }}>
+                {plural(job.skipped.length, "note")} left out
+              </summary>
+              <div
+                className="mono faint"
+                style={{
+                  fontSize: 12,
+                  lineHeight: 1.8,
+                  marginTop: 8,
+                  wordBreak: "break-word",
+                }}
+              >
+                {job.skipped.map((s, i) => (
+                  <div key={`${i}-${s}`}>{s}</div>
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </section>
+        {exportPanel}
+      </div>
+    </div>
+  );
+}
+
+/** The Script page: paste a whole script, make every line in the background, export the
+ * voiceover with captions (desktop) or share it (phone). */
+export function Script() {
+  const toast = useToast();
+  const [openId, setOpenId] = usePref<string | null>("booth.script.open", null);
+  const [job, setJob] = useState<ScriptJob | null>(null);
+  const [recent, setRecent] = useState<ScriptJob[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const list = await api.scriptList(6).catch(() => [] as ScriptJob[]);
+      if (!alive) {
+        return;
+      }
+      setRecent(list);
+      const open =
+        (openId && list.find((j) => j.id === openId)) ||
+        list.find((j) => j.running) ||
+        null;
+      if (open) {
+        setJob(await api.scriptGet(open.id).catch(() => open));
+      }
+      setLoaded(true);
+    };
+    load();
+    return () => {
+      alive = false;
+    };
+    // only on opening the page
+  }, []);
+
+  useEffect(() => {
+    const un = [
+      api.onScript((j) => {
+        setJob((cur) => (cur && cur.id === j.id ? j : cur));
+        setRecent((r) => r.map((x) => (x.id === j.id ? j : x)));
+      }),
+      api.onScriptError((e) => toast.bad(e.error)),
+    ];
+    return () => {
+      for (const p of un) {
+        p.then((f) => f()).catch(() => undefined);
+      }
+    };
+  }, [toast]);
+
+  if (!loaded) {
+    return null;
+  }
+  if (job) {
+    return (
+      <JobView
+        job={job}
+        onNew={() => {
+          setOpenId(null);
+          setJob(null);
+          api
+            .scriptList(6)
+            .then(setRecent)
+            .catch(() => undefined);
+        }}
+      />
+    );
+  }
+  return (
+    <PasteView
+      onStarted={(j) => {
+        setOpenId(j.id);
+        setJob(j);
+      }}
+      recent={recent}
+    />
+  );
+}

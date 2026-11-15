@@ -137,6 +137,23 @@ export const Icon = {
       <path d="M20 20l-4-4" />
     </svg>
   ),
+  script: (
+    <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" width="18">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h6" />
+    </svg>
+  ),
+  share: (
+    <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" strokeWidth="1.9" viewBox="0 0 24 24" width="16">
+      <path d="M12 3v12M7 8l5-5 5 5" />
+      <path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" />
+    </svg>
+  ),
+  redo: (
+    <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeWidth="1.9" viewBox="0 0 24 24" width="14">
+      <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" />
+    </svg>
+  ),
   library: (
     <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" width="18">
       <rect height="16" rx="1.5" width="4" x="3" y="4" />

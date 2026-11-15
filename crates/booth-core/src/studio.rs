@@ -31,7 +31,8 @@ pub struct SpeakOptions {
     pub drift_check: bool,
 }
 
-async fn pick_voice(z: &Zonos, key: Option<&str>) -> Result<voices::Voice> {
+/// The voice for `key` (id or name), or the one chosen in Booth, or Rupert.
+pub async fn pick_voice(z: &Zonos, key: Option<&str>) -> Result<voices::Voice> {
     let key = key.map(str::to_string).or_else(|| settings::load().default_voice);
     match key {
         Some(k) => voices::find(Some(z), &k).await,
@@ -50,6 +51,12 @@ async fn pick_voice(z: &Zonos, key: Option<&str>) -> Result<voices::Voice> {
 
 /// Speak `text` and save it as a take.
 pub async fn speak(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<Take> {
+    let (take, wav) = speak_audio(z, text, opts).await?;
+    takes::save(take, &wav)
+}
+
+/// Speak `text` without saving it: the take's record (no id or path yet) and its WAV.
+pub async fn speak_audio(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<(Take, Vec<u8>)> {
     if text.trim().is_empty() {
         bail!("nothing to say");
     }
@@ -121,7 +128,8 @@ pub async fn speak(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<Take> {
         starred: false,
         path: Default::default(),
     };
-    takes::save(take, &audio.wav)
+    let seconds = takes::wav_seconds(&audio.wav);
+    Ok((Take { seconds, ..take }, audio.wav))
 }
 
 /// Speak every line in order and join them into one take, with `gap_ms` between lines.

@@ -513,6 +513,119 @@ async fn render_script(lines: Vec<ScriptLine>, gap_ms: Option<u32>) -> Res<Take>
     studio::render_script(&z, &lines, gap_ms.unwrap_or(350), "app").await.map_err(err_chain)
 }
 
+// ---------- scripts (a whole script made line by line, in the background) ----------
+
+use booth_core::batch::{self, ExportOptions, Exported, Job};
+use booth_core::script;
+
+/// Split pasted text into lines, speakers and left-out notes (as you type).
+#[tauri::command]
+async fn script_parse(text: String) -> Res<script::Parsed> {
+    Ok(script::parse(&text, &[]))
+}
+
+/// Start (or keep going) making a script's lines; progress comes as `script` events.
+fn start_run(app: &AppHandle, id: String) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = async {
+            let z = zonos().await?;
+            let app2 = app.clone();
+            let r = batch::run(&z, &id, move |j: &Job| {
+                let _ = app2.emit("script", j);
+                #[cfg(target_os = "android")]
+                if j.running {
+                    let n = j.lines.iter().position(|l| l.state == batch::LineState::Making).map_or(j.done(), |i| i + 1);
+                    android_work::status(Some(("Making your script", &format!("Line {n} of {}", j.lines.len()))));
+                }
+            })
+            .await
+            .map_err(err_chain);
+            #[cfg(target_os = "android")]
+            android_work::status(None);
+            r
+        }
+        .await;
+        if let Err(e) = result {
+            booth_core::diag::note(format!("script {id}: {e}"));
+            let _ = app.emit("script-error", json!({ "id": id, "error": e }));
+            if let Ok(j) = batch::get(&id) {
+                let _ = app.emit("script", &j);
+            }
+        }
+    });
+}
+
+/// Save a pasted script with a voice per speaker and start making it.
+#[tauri::command]
+async fn script_create(app: AppHandle, text: String, voices: BTreeMap<String, String>, fallback: String) -> Res<Job> {
+    let z = zonos().await?;
+    let job = batch::create(&z, &text, &voices, &fallback, "app").await.map_err(err_chain)?;
+    start_run(&app, job.id.clone());
+    Ok(job)
+}
+
+#[tauri::command]
+async fn script_run(app: AppHandle, id: String) -> Res<Job> {
+    let job = batch::get(&id).map_err(err_chain)?;
+    start_run(&app, id);
+    Ok(job)
+}
+
+#[tauri::command]
+async fn script_stop() -> Res<()> {
+    batch::stop();
+    Ok(())
+}
+
+/// Make one line again (with new words, if given).
+#[tauri::command]
+async fn script_redo(app: AppHandle, id: String, index: usize, text: Option<String>) -> Res<Job> {
+    let job = batch::redo(&id, index, text).map_err(err_chain)?;
+    start_run(&app, id);
+    Ok(job)
+}
+
+#[tauri::command]
+async fn script_get(id: String) -> Res<Job> {
+    batch::get(&id).map_err(err_chain)
+}
+
+/// Recent scripts, newest first.
+#[tauri::command]
+async fn script_list(limit: Option<usize>) -> Res<Vec<Job>> {
+    Ok(batch::list().into_iter().take(limit.unwrap_or(20)).collect())
+}
+
+#[tauri::command]
+async fn script_captions(id: String, options: Option<ExportOptions>) -> Res<String> {
+    let job = batch::get(&id).map_err(err_chain)?;
+    Ok(batch::captions_preview(&job, &options.unwrap_or_default()))
+}
+
+#[tauri::command]
+async fn script_export(id: String, options: Option<ExportOptions>) -> Res<Exported> {
+    batch::export(&id, &options.unwrap_or_default()).map_err(err_chain)
+}
+
+/// Hand files to another app: Android's share sheet. (Desktop shows them in the folder instead.)
+#[tauri::command]
+async fn share_files(paths: Vec<PathBuf>, title: Option<String>) -> Res<()> {
+    let home = paths::home();
+    if paths.is_empty() || paths.iter().any(|p| !p.starts_with(&home) || !p.is_file()) {
+        return Err("only Booth's own files can be shared".into());
+    }
+    #[cfg(target_os = "android")]
+    {
+        android_work::share(&paths, title.as_deref().unwrap_or("Booth"))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = title;
+        Err("sharing works on phones; on a computer, use Show in folder".into())
+    }
+}
+
 #[tauri::command]
 async fn list_takes(limit: Option<usize>) -> Res<Vec<Take>> {
     Ok(takes::list(limit.unwrap_or(50)))
@@ -776,12 +889,67 @@ mod android_work {
     }
 
     fn set(on: bool) {
-        if let Err(e) = call(on) {
+        let r = with_class("com.nofacetube.booth.RenderService", |env, class, context| {
+            env.call_static_method(
+                class,
+                "set",
+                "(Landroid/content/Context;Z)V",
+                &[JValue::Object(context), JValue::Bool(on as u8)],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = r {
             booth_core::diag::note(format!("render service: couldn't turn it {}: {e}", if on { "on" } else { "off" }));
         }
     }
 
-    fn call(on: bool) -> Result<(), String> {
+    /// What the render notification says ("Making line 4 of 7"); `None` puts back the plain words.
+    pub fn status(words: Option<(&str, &str)>) {
+        let _ = with_class("com.nofacetube.booth.RenderService", |env, class, context| {
+            match words {
+                Some((title, text)) => {
+                    let (t, x) = (env.new_string(title)?, env.new_string(text)?);
+                    env.call_static_method(
+                        class,
+                        "status",
+                        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+                        &[JValue::Object(context), JValue::Object(&t), JValue::Object(&x)],
+                    )?;
+                }
+                None => {
+                    env.call_static_method(class, "plain", "()V", &[])?;
+                }
+            }
+            Ok(())
+        });
+    }
+
+    /// Opens Android's share sheet with these files.
+    pub fn share(paths: &[std::path::PathBuf], title: &str) -> Result<(), String> {
+        with_class("com.nofacetube.booth.Share", |env, class, context| {
+            let string = env.find_class("java/lang/String")?;
+            let empty = env.new_string("")?;
+            let arr = env.new_object_array(paths.len() as i32, &string, &empty)?;
+            for (i, p) in paths.iter().enumerate() {
+                let s = env.new_string(p.to_string_lossy())?;
+                env.set_object_array_element(&arr, i as i32, &s)?;
+            }
+            let t = env.new_string(title)?;
+            env.call_static_method(
+                class,
+                "files",
+                "(Landroid/content/Context;[Ljava/lang/String;Ljava/lang/String;)V",
+                &[JValue::Object(context), JValue::Object(&arr), JValue::Object(&t)],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Runs `f` with one of the app's own Kotlin classes and the application context.
+    fn with_class(
+        name: &str,
+        f: impl FnOnce(&mut jni::JNIEnv, &JClass, &JObject) -> jni::errors::Result<()>,
+    ) -> Result<(), String> {
         let ctx = ndk_context::android_context();
         // SAFETY: tao hands ndk-context the process's JavaVM and a global ref to the application
         // context; both live as long as the process.
@@ -791,17 +959,12 @@ mod android_work {
         let r = (|| -> jni::errors::Result<()> {
             // A native thread's FindClass only sees system classes: load ours through the app's loader.
             let loader = env.call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
-            let name = env.new_string("com.nofacetube.booth.RenderService")?;
+            let jname = env.new_string(name)?;
             let class = env
-                .call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[JValue::Object(&name)])?
+                .call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[JValue::Object(&jname)])?
                 .l()?;
-            env.call_static_method(
-                JClass::from(class),
-                "set",
-                "(Landroid/content/Context;Z)V",
-                &[JValue::Object(&context), JValue::Bool(on as u8)],
-            )?;
-            Ok(())
+            let class = JClass::from(class);
+            f(&mut env, &class, &context)
         })();
         if r.is_err() && env.exception_check().unwrap_or(false) {
             let _ = env.exception_describe();
@@ -870,6 +1033,16 @@ pub fn run() {
             export_takes,
             speak,
             render_script,
+            script_parse,
+            script_create,
+            script_run,
+            script_stop,
+            script_redo,
+            script_get,
+            script_list,
+            script_captions,
+            script_export,
+            share_files,
             list_takes,
             star_take,
             delete_take,
@@ -889,6 +1062,7 @@ pub fn run() {
             // Free the engine when the window closes, unless the user keeps the engine for Claude.
             // stop_when_idle waits for any render in flight; it never kills a running job.
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                batch::stop(); // finish the line being made, then let the engine go
                 if settings::load().keep_engine_running || STOPPING.swap(true, Ordering::SeqCst) {
                     return;
                 }

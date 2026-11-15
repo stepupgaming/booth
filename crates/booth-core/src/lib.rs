@@ -2,12 +2,14 @@
 //! voices, takes and settings.
 
 pub mod api;
+pub mod batch;
 pub mod controls;
 pub mod diag;
 pub mod drift;
 pub mod engine;
 pub mod models;
 pub mod paths;
+pub mod script;
 pub mod settings;
 pub mod studio;
 pub mod takes;

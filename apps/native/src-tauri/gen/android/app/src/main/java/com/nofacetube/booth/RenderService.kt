@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -35,21 +36,7 @@ class RenderService : Service() {
         }
       )
     }
-    val open = PendingIntent.getActivity(
-      this, 0,
-      Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-      PendingIntent.FLAG_IMMUTABLE
-    )
-    val note = NotificationCompat.Builder(this, CHANNEL)
-      .setSmallIcon(R.drawable.ic_stat_booth)
-      .setContentTitle("Generating speech")
-      .setContentText("Booth keeps going while you use other apps.")
-      .setContentIntent(open)
-      .setOngoing(true)
-      .setSilent(true)
-      .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-      .build()
+    val note = build(this)
     // Media processing is the type made for this, but some Android builds turn it down (Android 17
     // on a Galaxy S25 did); data sync is the fallback. Before Android 10 there are no types.
     val types = buildList {
@@ -70,6 +57,12 @@ class RenderService : Service() {
     if (!ok) {
       running = false
       stopSelf()
+    } else if (wake == null) {
+      // A foreground service alone doesn't keep the processor awake with the screen off; a
+      // partial wake lock does (the screen still turns off). Capped so it can't outlive a bug.
+      wake = getSystemService(PowerManager::class.java)
+        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Booth:render")
+        .apply { setReferenceCounted(false); acquire(3 * 60 * 60 * 1000L) }
     }
     return START_NOT_STICKY
   }
@@ -82,14 +75,61 @@ class RenderService : Service() {
 
   override fun onDestroy() {
     running = false
+    wake?.let { if (it.isHeld) it.release() }
+    wake = null
     super.onDestroy()
   }
+
+  private var wake: PowerManager.WakeLock? = null
 
   companion object {
     private const val TAG = "BoothRender"
     private const val CHANNEL = "render"
     private const val NOTE_ID = 7
     @Volatile private var running = false
+    @Volatile private var title = "Generating speech"
+    @Volatile private var text = "Booth keeps going while you use other apps."
+
+    /** What the notification says, e.g. "Making line 4 of 7" while a script renders. Any thread. */
+    @JvmStatic
+    fun status(ctx: Context, newTitle: String, newText: String) {
+      title = newTitle
+      text = newText
+      // Posting with the service's own id replaces the notification it shows.
+      if (running) {
+        try {
+          ctx.getSystemService(NotificationManager::class.java).notify(NOTE_ID, build(ctx))
+        } catch (e: Exception) {
+          Log.w(TAG, "couldn't update the notification", e)
+        }
+      }
+    }
+
+    private fun build(ctx: Context): android.app.Notification {
+      val open = PendingIntent.getActivity(
+        ctx, 0,
+        Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE
+      )
+      return NotificationCompat.Builder(ctx, CHANNEL)
+        .setSmallIcon(R.drawable.ic_stat_booth)
+        .setContentTitle(title)
+        .setContentText(text)
+        .setContentIntent(open)
+        .setOngoing(true)
+        .setSilent(true)
+        .setOnlyAlertOnce(true)
+        .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        .build()
+    }
+
+    /** Back to the plain wording once a script is done. */
+    @JvmStatic
+    fun plain() {
+      title = "Generating speech"
+      text = "Booth keeps going while you use other apps."
+    }
 
     /** On while the engine is loading or rendering; off when it's idle. Any thread. */
     @JvmStatic

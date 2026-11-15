@@ -237,6 +237,43 @@ def main():
         first = json.loads(text)["file"]
         check_take(first, "first take")
 
+        step("Make a whole script (two speakers, notes left out) with captions")
+        tools = {t["name"] for t in s.call("tools/list", {}, 60).get("tools", [])}
+        if "make_script" not in tools:
+            print("skipped: this booth-mcp has no make_script (before 0.4.1)")
+        else:
+            script = "\n".join(
+                [
+                    "# Smoke script",
+                    "[B-roll: a desk]",
+                    "NARRATOR: Booth is reading a whole script now.",
+                    "(SFX: click)",
+                    "",
+                    "GUEST: And this line is mine.",
+                ]
+            )
+            err, text = s.tool("make_script", {"script": script})
+            if err:
+                fail("make_script failed")
+            out = json.loads(text)
+            for _ in range(20):
+                if out.get("status") != "making":
+                    break
+                err, text = s.tool("script_status", {"id": out["id"]})
+                if err:
+                    fail("script_status failed")
+                out = json.loads(text)
+            if out.get("status") != "done" or out.get("lines_total") != 2:
+                fail(f"script didn't finish with 2 lines: {out.get('status')}, {out.get('lines_total')}")
+            if len(out.get("left_out", [])) != 3:
+                fail(f"expected 3 notes left out, got {out.get('left_out')}")
+            check_take(out["voiceover"], "script voiceover")
+            srt = Path(out["captions"]).read_text(encoding="utf-8")
+            cues = [c for c in srt.strip().split("\n\n") if c.strip()]
+            if len(cues) < 2 or "-->" not in srt or "B-roll" in srt:
+                fail(f"captions look wrong:\n{srt}")
+            print(f"{len(cues)} caption cues, voiceover {out['seconds']} s")
+
         step("Clone a voice from that take (the engine decodes it with booth-decode)")
         err, text = s.tool(
             "create_voice",

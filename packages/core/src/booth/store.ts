@@ -11,7 +11,7 @@ import {
   type Voice,
 } from "@workspace/core/booth/api";
 
-export type View = "setup" | "studio" | "library" | "voices" | "create" | "settings";
+export type View = "setup" | "studio" | "script" | "library" | "voices" | "create" | "settings";
 
 interface BoothState {
   view: View;

@@ -14,7 +14,13 @@ export type EngineState =
   | { state: "no_engine"; looked_in: string }
   | { state: "no_models"; looked_in: string }
   | { state: "stopped" }
-  | { state: "running"; port: number; pid: number; packs: Pack[]; accel: Accel };
+  | {
+      state: "running";
+      port: number;
+      pid: number;
+      packs: Pack[];
+      accel: Accel;
+    };
 
 export interface Settings {
   default_voice: string | null;
@@ -26,6 +32,64 @@ export interface Settings {
   device: Device;
   /** Language of the text (e.g. "es", "fr_fr"); null = US English. */
   language: string | null;
+}
+
+/** A pasted script split into the lines Booth speaks (booth-core script.rs). */
+export interface ParsedScript {
+  lines: { speaker: string | null; text: string; para: boolean }[];
+  /** Headings and notes left out of the audio. */
+  skipped: string[];
+  /** Speaker label ("" = no label) and how many lines it has, in order of appearance. */
+  speakers: [string, number][];
+}
+
+export type LineState = "waiting" | "making" | "done" | "failed";
+
+export interface ScriptJobLine {
+  speaker: string | null;
+  voice: string;
+  voice_name: string;
+  text: string;
+  para: boolean;
+  state: LineState;
+  seconds: number;
+  seed: number | null;
+  version: number;
+  voice_match?: number | null;
+  drifted?: boolean;
+  error?: string | null;
+  path: string | null;
+}
+
+export interface ScriptExported {
+  folder: string;
+  voiceover: string | null;
+  captions: string | null;
+  lines: string[];
+  take_id: string | null;
+  seconds: number;
+}
+
+/** A script being made line by line (booth-core batch.rs). */
+export interface ScriptJob {
+  id: string;
+  title: string;
+  created_at: string;
+  lines: ScriptJobLine[];
+  skipped: string[];
+  source: string;
+  voices: Record<string, string>;
+  via: string;
+  running: boolean;
+  exported?: ScriptExported | null;
+}
+
+export interface ScriptExportOptions {
+  gap_ms: number;
+  para_gap_ms: number;
+  voiceover: boolean;
+  captions: boolean;
+  lines: boolean;
 }
 
 export interface Overview {
@@ -210,6 +274,35 @@ export const api = {
     invoke<Take>("render_script", { lines, gapMs }),
   exportTakes: (ids: string[], gapMs?: number) =>
     invoke<Take>("export_takes", { ids, gapMs }),
+  scriptParse: (text: string) => invoke<ParsedScript>("script_parse", { text }),
+  /** Save a pasted script (speaker label -> voice id) and start making it in the background. */
+  scriptCreate: (
+    text: string,
+    voices: Record<string, string>,
+    fallback: string
+  ) => invoke<ScriptJob>("script_create", { text, voices, fallback }),
+  scriptRun: (id: string) => invoke<ScriptJob>("script_run", { id }),
+  scriptStop: () => invoke<void>("script_stop"),
+  scriptRedo: (id: string, index: number, text?: string | null) =>
+    invoke<ScriptJob>("script_redo", { id, index, text }),
+  scriptGet: (id: string) => invoke<ScriptJob>("script_get", { id }),
+  scriptList: (limit?: number) => invoke<ScriptJob[]>("script_list", { limit }),
+  scriptCaptions: (id: string, options: ScriptExportOptions) =>
+    invoke<string>("script_captions", { id, options }),
+  scriptExport: (id: string, options: ScriptExportOptions) =>
+    invoke<ScriptExported>("script_export", { id, options }),
+  /** Android's share sheet with these Booth files. */
+  shareFiles: (paths: string[], title?: string) =>
+    invoke<void>("share_files", { paths, title }),
+  /** A script's progress, after every line. */
+  onScript: (cb: (j: ScriptJob) => void): Promise<UnlistenFn> =>
+    listen<ScriptJob>("script", (ev) => cb(ev.payload)),
+  onScriptError: (
+    cb: (e: { id: string; error: string }) => void
+  ): Promise<UnlistenFn> =>
+    listen<{ id: string; error: string }>("script-error", (ev) =>
+      cb(ev.payload)
+    ),
   listTakes: (limit?: number) => invoke<Take[]>("list_takes", { limit }),
   starTake: (id: string, starred: boolean) =>
     invoke<Take>("star_take", { id, starred }),
@@ -231,13 +324,15 @@ export const api = {
   /** booth.log and the engine's log, for Settings → Log. */
   readLog: () => invoke<string>("read_log"),
   /** One line into booth.log. Never throws: logging must not break anything. */
-  logNote: (text: string) => invoke<void>("log_note", { text }).catch(() => undefined),
+  logNote: (text: string) =>
+    invoke<void>("log_note", { text }).catch(() => undefined),
   onUpdateProgress: (cb: (e: UpdateProgress) => void): Promise<UnlistenFn> =>
     listen<UpdateProgress>("update-progress", (ev) => cb(ev.payload)),
 };
 
 /** Where the engine runs, in words: "graphics card" or "processor". */
-export const accelWhere = (a: Accel | undefined) => (a === "cpu" ? "processor" : "graphics card");
+export const accelWhere = (a: Accel | undefined) =>
+  a === "cpu" ? "processor" : "graphics card";
 
 /** A local file as a URL the web view can load (asset protocol). */
 export const fileUrl = (path: string) => convertFileSrc(path);
@@ -263,18 +358,50 @@ export const canExact = (v: Voice) =>
 export const canShape = (v: Voice) =>
   v.modes.length === 0 || v.modes.includes("embedding");
 
-
 // The engine's languages (Zyphra's languages.json). English first; the rest by name.
 const OTHER_LANGUAGES = [
-  ["ar", "Arabic"], ["bn", "Bengali"], ["bg", "Bulgarian"], ["cs", "Czech"], ["da", "Danish"],
-  ["nl", "Dutch"], ["fi", "Finnish"], ["fr_fr", "French"], ["ka", "Georgian"], ["de", "German"],
-  ["el", "Greek"], ["gu", "Gujarati"], ["he", "Hebrew"], ["hi", "Hindi"], ["hu", "Hungarian"],
-  ["id", "Indonesian"], ["it", "Italian"], ["ja", "Japanese"], ["kn", "Kannada"], ["ko", "Korean"],
-  ["ms", "Malay"], ["ml", "Malayalam"], ["cmn", "Mandarin"], ["mr", "Marathi"], ["no", "Norwegian"],
-  ["or", "Odia"], ["pl", "Polish"], ["pt_br", "Portuguese"], ["pa", "Punjabi"], ["ro", "Romanian"],
-  ["ru", "Russian"], ["sk", "Slovak"], ["es", "Spanish"], ["sv", "Swedish"], ["tl", "Tagalog"],
-  ["ta", "Tamil"], ["te", "Telugu"], ["th", "Thai"], ["tr", "Turkish"], ["uk", "Ukrainian"],
-  ["ur", "Urdu"], ["vi", "Vietnamese"],
+  ["ar", "Arabic"],
+  ["bn", "Bengali"],
+  ["bg", "Bulgarian"],
+  ["cs", "Czech"],
+  ["da", "Danish"],
+  ["nl", "Dutch"],
+  ["fi", "Finnish"],
+  ["fr_fr", "French"],
+  ["ka", "Georgian"],
+  ["de", "German"],
+  ["el", "Greek"],
+  ["gu", "Gujarati"],
+  ["he", "Hebrew"],
+  ["hi", "Hindi"],
+  ["hu", "Hungarian"],
+  ["id", "Indonesian"],
+  ["it", "Italian"],
+  ["ja", "Japanese"],
+  ["kn", "Kannada"],
+  ["ko", "Korean"],
+  ["ms", "Malay"],
+  ["ml", "Malayalam"],
+  ["cmn", "Mandarin"],
+  ["mr", "Marathi"],
+  ["no", "Norwegian"],
+  ["or", "Odia"],
+  ["pl", "Polish"],
+  ["pt_br", "Portuguese"],
+  ["pa", "Punjabi"],
+  ["ro", "Romanian"],
+  ["ru", "Russian"],
+  ["sk", "Slovak"],
+  ["es", "Spanish"],
+  ["sv", "Swedish"],
+  ["tl", "Tagalog"],
+  ["ta", "Tamil"],
+  ["te", "Telugu"],
+  ["th", "Thai"],
+  ["tr", "Turkish"],
+  ["uk", "Ukrainian"],
+  ["ur", "Urdu"],
+  ["vi", "Vietnamese"],
 ].map(([value, label]) => ({ value: value as string, label: label as string }));
 
 /** The Language picker's groups: English first, then the rest by name. */
@@ -290,9 +417,11 @@ export const LANGUAGE_GROUPS = [
 ];
 
 export const languageName = (code: string) =>
-  LANGUAGE_GROUPS.flatMap((g) => g.options).find((o) => o.value === code)?.label ?? code;
+  LANGUAGE_GROUPS.flatMap((g) => g.options).find((o) => o.value === code)
+    ?.label ?? code;
 
-const ENGLISH_TEST_LINE = "The quick brown fox jumps over the lazy dog, and nobody seems to mind.";
+const ENGLISH_TEST_LINE =
+  "The quick brown fox jumps over the lazy dog, and nobody seems to mind.";
 
 // A line to hear a new voice say, per language. Languages without one ask for a line instead.
 const TEST_LINES: Record<string, string> = {
