@@ -316,6 +316,16 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo build --release -p booth-mcp
 
+      # The engine decodes cloning clips (and the drift check's takes) by running ffmpeg, which most
+      # computers don't have. booth-decode stands in for it, next to the engine in the app.
+      - name: Build booth-decode
+        shell: pwsh
+        run: |
+          cargo build --release -p booth-decode
+          $exe = if ($IsWindows) { 'booth-decode.exe' } else { 'booth-decode' }
+          Copy-Item "target/release/$exe" engine-dist/
+          if (-not $IsWindows) { chmod +x engine-dist/booth-decode }
+
       # pwsh, not bash: on Windows, Git bash's /usr/bin/link shadows the MSVC linker that rustc needs.
       - name: Build the app
         shell: pwsh

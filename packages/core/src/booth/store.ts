@@ -144,6 +144,21 @@ export const controlById = (cat: Catalog | null, id: string): Control | undefine
 export const packPresent = (o: Overview | null, pack: string) =>
   o?.packs.some((p) => p.pack === pack && p.present) ?? false;
 
+/** The language Booth speaks (a setting), and a setter that saves it. */
+export function useLanguage(): [string, (code: string) => Promise<void>] {
+  const overview = useBooth((s) => s.overview);
+  const refresh = useBooth((s) => s.refresh);
+  const set = async (code: string) => {
+    const s = overview?.settings;
+    if (!s) {
+      return;
+    }
+    await api.saveSettings({ ...s, language: code === "en_us" ? null : code });
+    await refresh();
+  };
+  return [overview?.settings.language ?? "en_us", set];
+}
+
 export const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** A slider position (-100..100) to a dose inside the control's safe range. */

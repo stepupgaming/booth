@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { api, canExact, canShape, errText, fileUrl, type Mode, type Take, voiceDesc } from "@workspace/core/booth/api";
-import { controlById, currentVoice, isPhone, packPresent, round2, toDose, useBooth } from "@workspace/core/booth/store";
+import { api, canExact, canShape, errText, fileUrl, LANGUAGE_GROUPS, type Mode, type Take, voiceDesc } from "@workspace/core/booth/api";
+import { controlById, currentVoice, isPhone, packPresent, round2, toDose, useBooth, useLanguage } from "@workspace/core/booth/store";
 import { DoseSlider, Dropdown, Icon, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
 
 interface Line {
@@ -67,19 +67,6 @@ const TEXTURES = ["deep", "bright", "husky", "raspy", "soft", "authority"];
 const PITCH_MAX = 0.7;
 
 const newId = () => Math.random().toString(36).slice(2, 10);
-// The engine's languages (Zyphra's languages.json). English first; the rest by name.
-const OTHER_LANGUAGES = [
-  ["ar", "Arabic"], ["bn", "Bengali"], ["bg", "Bulgarian"], ["cs", "Czech"], ["da", "Danish"],
-  ["nl", "Dutch"], ["fi", "Finnish"], ["fr_fr", "French"], ["ka", "Georgian"], ["de", "German"],
-  ["el", "Greek"], ["gu", "Gujarati"], ["he", "Hebrew"], ["hi", "Hindi"], ["hu", "Hungarian"],
-  ["id", "Indonesian"], ["it", "Italian"], ["ja", "Japanese"], ["kn", "Kannada"], ["ko", "Korean"],
-  ["ms", "Malay"], ["ml", "Malayalam"], ["cmn", "Mandarin"], ["mr", "Marathi"], ["no", "Norwegian"],
-  ["or", "Odia"], ["pl", "Polish"], ["pt_br", "Portuguese"], ["pa", "Punjabi"], ["ro", "Romanian"],
-  ["ru", "Russian"], ["sk", "Slovak"], ["es", "Spanish"], ["sv", "Swedish"], ["tl", "Tagalog"],
-  ["ta", "Tamil"], ["te", "Telugu"], ["th", "Thai"], ["tr", "Turkish"], ["uk", "Ukrainian"],
-  ["ur", "Urdu"], ["vi", "Vietnamese"],
-].map(([value, label]) => ({ value: value as string, label: label as string }));
-
 const seed = () => 1 + Math.floor(Math.random() * 2_147_483_000);
 
 /** One quiet line under a script line when Booth redid takes that sounded unlike the voice. */
@@ -369,19 +356,8 @@ export function Studio() {
     }
   };
 
-  const language = overview?.settings.language ?? "en_us";
-  const setLanguage = async (l: string) => {
-    const s = overview?.settings;
-    if (!s) {
-      return;
-    }
-    try {
-      await api.saveSettings({ ...s, language: l === "en_us" ? null : l });
-      await refresh();
-    } catch (e) {
-      toast.bad(errText(e));
-    }
-  };
+  const [language, saveLanguage] = useLanguage();
+  const setLanguage = (l: string) => saveLanguage(l).catch((e) => toast.bad(errText(e)));
 
   const moodIds = new Set(catalog?.moods.map((m) => controlById(catalog, m.control)) .flatMap((c) => Object.keys(c?.map["+"] ?? {})) ?? []);
   const extraEmotions = (catalog?.directions ?? [])
@@ -908,16 +884,7 @@ export function Studio() {
         <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
           Language
           <Dropdown
-            groups={[
-              {
-                label: "English",
-                options: [
-                  { value: "en_us", label: "English (US)" },
-                  { value: "en_gb", label: "English (UK)" },
-                ],
-              },
-              { label: "Other languages", options: OTHER_LANGUAGES },
-            ]}
+            groups={LANGUAGE_GROUPS}
             label="Language"
             onChange={setLanguage}
             value={language}

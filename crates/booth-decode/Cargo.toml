@@ -1,6 +1,6 @@
 [package]
 name = "booth-decode"
-description = "Booth's stand-in for ffmpeg where there is none (Android): decodes a clip to mono 32-bit float at the rate the engine asks for"
+description = "Booth's stand-in for ffmpeg where there is none (Android, and desktops without ffmpeg): decodes a clip to mono 32-bit float at the rate the engine asks for"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

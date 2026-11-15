@@ -262,3 +262,69 @@ export const canExact = (v: Voice) =>
   v.modes.length === 0 || v.modes.includes("reference");
 export const canShape = (v: Voice) =>
   v.modes.length === 0 || v.modes.includes("embedding");
+
+
+// The engine's languages (Zyphra's languages.json). English first; the rest by name.
+const OTHER_LANGUAGES = [
+  ["ar", "Arabic"], ["bn", "Bengali"], ["bg", "Bulgarian"], ["cs", "Czech"], ["da", "Danish"],
+  ["nl", "Dutch"], ["fi", "Finnish"], ["fr_fr", "French"], ["ka", "Georgian"], ["de", "German"],
+  ["el", "Greek"], ["gu", "Gujarati"], ["he", "Hebrew"], ["hi", "Hindi"], ["hu", "Hungarian"],
+  ["id", "Indonesian"], ["it", "Italian"], ["ja", "Japanese"], ["kn", "Kannada"], ["ko", "Korean"],
+  ["ms", "Malay"], ["ml", "Malayalam"], ["cmn", "Mandarin"], ["mr", "Marathi"], ["no", "Norwegian"],
+  ["or", "Odia"], ["pl", "Polish"], ["pt_br", "Portuguese"], ["pa", "Punjabi"], ["ro", "Romanian"],
+  ["ru", "Russian"], ["sk", "Slovak"], ["es", "Spanish"], ["sv", "Swedish"], ["tl", "Tagalog"],
+  ["ta", "Tamil"], ["te", "Telugu"], ["th", "Thai"], ["tr", "Turkish"], ["uk", "Ukrainian"],
+  ["ur", "Urdu"], ["vi", "Vietnamese"],
+].map(([value, label]) => ({ value: value as string, label: label as string }));
+
+/** The Language picker's groups: English first, then the rest by name. */
+export const LANGUAGE_GROUPS = [
+  {
+    label: "English",
+    options: [
+      { value: "en_us", label: "English (US)" },
+      { value: "en_gb", label: "English (UK)" },
+    ],
+  },
+  { label: "Other languages", options: OTHER_LANGUAGES },
+];
+
+export const languageName = (code: string) =>
+  LANGUAGE_GROUPS.flatMap((g) => g.options).find((o) => o.value === code)?.label ?? code;
+
+const ENGLISH_TEST_LINE = "The quick brown fox jumps over the lazy dog, and nobody seems to mind.";
+
+// A line to hear a new voice say, per language. Languages without one ask for a line instead.
+const TEST_LINES: Record<string, string> = {
+  en_us: ENGLISH_TEST_LINE,
+  en_gb: ENGLISH_TEST_LINE,
+  es: "Esta es una pequeña prueba de mi nueva voz, leída con calma.",
+  fr_fr: "Ceci est un petit essai de ma nouvelle voix, lu sans se presser.",
+  de: "Das ist ein kurzer Test meiner neuen Stimme, ganz in Ruhe gelesen.",
+  it: "Questa è una breve prova della mia nuova voce, letta con calma.",
+  pt_br: "Este é um pequeno teste da minha nova voz, lido com calma.",
+  nl: "Dit is een korte test van mijn nieuwe stem, rustig voorgelezen.",
+  pl: "To jest krótki test mojego nowego głosu, czytany spokojnie.",
+  sv: "Det här är ett kort test av min nya röst, läst i lugn takt.",
+  da: "Dette er en kort test af min nye stemme, læst i roligt tempo.",
+  no: "Dette er en kort test av min nye stemme, lest i rolig tempo.",
+  fi: "Tämä on lyhyt testi uudesta äänestäni, luettuna rauhallisesti.",
+  cs: "Tohle je krátký test mého nového hlasu, přečtený v klidu.",
+  sk: "Toto je krátky test môjho nového hlasu, prečítaný v pokoji.",
+  ro: "Acesta este un scurt test al noii mele voci, citit în ritm liniștit.",
+  hu: "Ez egy rövid próba az új hangomról, nyugodtan felolvasva.",
+  ru: "Это короткая проверка моего нового голоса, прочитанная спокойно.",
+  uk: "Це коротка перевірка мого нового голосу, прочитана спокійно.",
+  el: "Αυτή είναι μια σύντομη δοκιμή της νέας μου φωνής, διαβασμένη ήρεμα.",
+  tr: "Bu, yeni sesimin sakin bir şekilde okunan kısa bir denemesi.",
+  id: "Ini adalah tes singkat untuk suara baru saya, dibaca dengan tenang.",
+  ms: "Ini ialah ujian ringkas suara baharu saya, dibaca dengan tenang.",
+  vi: "Đây là một bài thử ngắn cho giọng nói mới của tôi, đọc chậm rãi.",
+  hi: "यह मेरी नई आवाज़ का एक छोटा सा परीक्षण है, आराम से पढ़ा गया।",
+  ja: "これは新しい声の短いテストです。ゆっくり読んでいます。",
+  cmn: "这是我新声音的简短测试，用平稳的语速朗读。",
+  ko: "이것은 제 새 목소리의 짧은 테스트입니다. 천천히 읽고 있어요.",
+};
+
+/** The test line for a language, or "" when Booth has none and the person types their own. */
+export const testLineFor = (code: string) => TEST_LINES[code] ?? "";

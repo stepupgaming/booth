@@ -107,13 +107,20 @@ pub fn server_exe(engine: &Path) -> PathBuf {
 }
 
 /// What the engine decodes cloning clips with (it runs `ffmpeg`, or `ZONOS3_FFMPEG` when set):
-/// an ffmpeg next to the engine, or on Android, where there is none, Booth's `booth-decode`.
+/// an ffmpeg next to the engine, else Booth's own `booth-decode`, next to the engine or in the
+/// engine that shipped with the app (the downloaded NVIDIA engine has none). Without either the
+/// engine runs whatever `ffmpeg` is on PATH, which most computers don't have, and cloning fails.
 pub fn audio_decoder(engine: &Path) -> Option<PathBuf> {
     #[cfg(target_os = "android")]
     if let Some(dir) = native_lib_dir() {
         return Some(dir.join("libboothdecode.so")).filter(|p| p.is_file());
     }
-    Some(engine.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" })).filter(|p| p.is_file())
+    let exe = |name: &str| if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    let mut candidates = vec![engine.join(exe("ffmpeg")), engine.join(exe("booth-decode"))];
+    candidates.extend(bundled_engine_dir().map(|d| d.join(exe("booth-decode"))));
+    // A development build: booth-decode sits next to the app in the same target folder.
+    candidates.extend(std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(exe("booth-decode")))));
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 /// Android: the app's native library folder (`nativeLibraryDir`), found from where the app's own

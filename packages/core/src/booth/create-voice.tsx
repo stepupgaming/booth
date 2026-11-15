@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, canExact, canShape, errText, fileUrl, type Take, type Voice } from "@workspace/core/booth/api";
-import { isPhone, packPresent, round2, useBooth } from "@workspace/core/booth/store";
+import { api, canExact, canShape, errText, fileUrl, LANGUAGE_GROUPS, languageName, type Take, testLineFor, type Voice } from "@workspace/core/booth/api";
+import { isPhone, packPresent, round2, useBooth, useLanguage } from "@workspace/core/booth/store";
 import { DoseSlider, Dropdown, Icon, Orb, PlayButton, usePlayer, useToast, Wave } from "@workspace/core/booth/ui";
 
 // ---------- audio helpers ----------
@@ -18,8 +18,6 @@ const PASSAGE =
   "People look, but no one ever finds it. Some say there is a pot of gold at one end. " +
   "I usually take the long way home, past the old bridge and the bakery on the corner, " +
   "and on a good day I stop for a coffee and just watch the street for a while.";
-
-const TEST_LINE = "The quick brown fox jumps over the lazy dog, and nobody seems to mind.";
 
 let decodeCtx: AudioContext | null = null;
 async function decode(data: ArrayBuffer): Promise<AudioBuffer> {
@@ -244,7 +242,11 @@ export function CreateVoice() {
   const [description, setDescription] = useState("");
 
   // test and save
-  const [testLine, setTestLine] = useState(TEST_LINE);
+  // The test takes are read in Booth's language (the same setting as Studio's). Until it's edited,
+  // the test line is that language's sample line; null means not edited.
+  const [language, saveLanguage] = useLanguage();
+  const [testLine, setTestLine] = useState<string | null>(null);
+  const line = (testLine ?? testLineFor(language)).trim();
   const [tests, setTests] = useState<Take[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [made, setMade] = useState<{ voice: Voice; key: string } | null>(null);
@@ -346,6 +348,9 @@ export function CreateVoice() {
   };
 
   const makeTests = async () => {
+    if (!line) {
+      return; // a language with no sample line: the person types one first
+    }
     setBusy("Starting…");
     setTests([]);
     try {
@@ -387,7 +392,7 @@ export function CreateVoice() {
       for (let i = 0; i < 3; i++) {
         setBusy(`Take ${i + 1} of 3…`);
         const t = await work(() =>
-          api.speak({ text: testLine.trim() || TEST_LINE, voice: voice.id, mode, controls, seed: 1 + Math.floor(Math.random() * 2e9) })
+          api.speak({ text: line, voice: voice.id, mode, controls, seed: 1 + Math.floor(Math.random() * 2e9) })
         );
         out.push(t);
         setTests([...out]);
@@ -774,12 +779,32 @@ export function CreateVoice() {
             </div>
           ) : null}
           <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <label className="lbl" style={{ flex: "0 1 220px" }}>
+              Language
+              <Dropdown
+                groups={LANGUAGE_GROUPS}
+                label="Language"
+                onChange={(code) => {
+                  // A new language gets its own sample line, unless the person wrote their own.
+                  if (testLine !== null && testLine.trim() === testLineFor(language)) {
+                    setTestLine(null);
+                  }
+                  saveLanguage(code).catch((e) => toast.bad(errText(e)));
+                }}
+                value={language}
+              />
+            </label>
             <label className="lbl" style={{ flex: "1 1 320px" }}>
               Test line
-              <input className="field" onChange={(e) => setTestLine(e.target.value)} value={testLine} />
+              <input
+                className="field"
+                onChange={(e) => setTestLine(e.target.value)}
+                placeholder={`Type a line in ${languageName(language)}`}
+                value={testLine ?? testLineFor(language)}
+              />
             </label>
-            <button className="btn ghost" disabled={!!busy} onClick={makeTests} type="button">
-              Make 3 more
+            <button className="btn ghost" disabled={!!busy || !line} onClick={makeTests} type="button">
+              {tests.length ? "Make 3 more" : "Make 3 takes"}
             </button>
           </div>
         </div>

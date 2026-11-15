@@ -1,5 +1,5 @@
 //! A stand-in for the one ffmpeg command the voice engine runs, for platforms without ffmpeg
-//! (Android). The engine decodes a cloning clip with
+//! (Android, and desktops without one). The engine decodes a cloning clip with
 //!
 //! ```text
 //! ffmpeg -nostdin -v error -i <clip> -ac 1 -ar <rate> -t <seconds> -f f32le -
