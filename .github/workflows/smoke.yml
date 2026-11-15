@@ -1,0 +1,135 @@
+name: Release smoke test
+
+# After each release, install the real Windows, Linux and macOS downloads on fresh machines with
+# no ffmpeg and clone a voice through the booth-mcp that ships inside the app (and, on Windows and
+# macOS, the one in booth.mcpb that Claude Desktop installs). See scripts/smoke-release.py.
+# Start it by hand for an existing release with "Run workflow" and the tag.
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to test, e.g. v0.4.1-rc.1"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          - { name: Linux, os: ubuntu-latest }
+          - { name: macOS, os: macos-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Model cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/booth-models
+          key: booth-models-${{ hashFiles('crates/booth-core/models.lock.json') }}
+
+      - name: Download the release
+        shell: bash
+        run: |
+          mkdir -p dl && cd dl
+          case "${{ runner.os }}" in
+            Windows) gh release download "$TAG" --repo "${{ github.repository }}" -p Booth-Setup.exe -p booth.mcpb ;;
+            Linux)   gh release download "$TAG" --repo "${{ github.repository }}" -p Booth-linux.deb -p Booth-linux.AppImage ;;
+            macOS)   gh release download "$TAG" --repo "${{ github.repository }}" -p Booth-mac.dmg -p booth-mac.mcpb ;;
+          esac
+          ls -la
+
+      # The test leaves ffmpeg off PATH by itself; on Linux and macOS it's uninstalled outright.
+      - name: Remove ffmpeg
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = Linux ]; then sudo apt-get remove -y ffmpeg >/dev/null 2>&1 || true
+          else brew uninstall --ignore-dependencies ffmpeg >/dev/null 2>&1 || true; fi
+          command -v ffmpeg && echo "::warning::ffmpeg is still at $(command -v ffmpeg)" || echo "no ffmpeg"
+
+      - name: Windows, installed app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Process dl\Booth-Setup.exe -ArgumentList '/S' -Wait
+          $dirs = @("$env:LOCALAPPDATA\Booth", "$env:ProgramFiles\Booth") | Where-Object { Test-Path $_ }
+          $mcp = $dirs | ForEach-Object { Get-ChildItem $_ -Recurse -Filter booth-mcp.exe } | Select-Object -First 1
+          if (-not $mcp) { throw "booth-mcp.exe not found after install (looked in: $dirs)" }
+          "INSTALL_DIR=$($mcp.DirectoryName)" >> $env:GITHUB_ENV
+          python -I scripts/smoke-release.py --mcp $mcp.FullName --models "${{ runner.temp }}/booth-models" --decoder-check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Windows, Claude Desktop bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive dl\booth.mcpb -DestinationPath mcpb
+          python -I scripts/smoke-release.py --mcp mcpb\server\booth-mcp.exe --models "${{ runner.temp }}/booth-models" --resource-dir $env:INSTALL_DIR
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Linux, .deb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ./dl/Booth-linux.deb
+          pkg=$(dpkg-deb -f dl/Booth-linux.deb Package)
+          mcp=$(dpkg -L "$pkg" | grep '/booth-mcp$' | head -1)
+          [ -n "$mcp" ] || { dpkg -L "$pkg"; exit 1; }
+          python3 -I scripts/smoke-release.py --mcp "$mcp" --models "${{ runner.temp }}/booth-models"
+
+      - name: Linux, AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x dl/Booth-linux.AppImage
+          (cd dl && ./Booth-linux.AppImage --appimage-extract >/dev/null)
+          mcp=$(find dl/squashfs-root -type f -name booth-mcp | head -1)
+          [ -n "$mcp" ] || { find dl/squashfs-root -maxdepth 4; exit 1; }
+          python3 -I scripts/smoke-release.py --mcp "$mcp" --models "${{ runner.temp }}/booth-models" --decoder-check
+
+      - name: macOS, app on the processor
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/booth-dmg dl/Booth-mac.dmg
+          mkdir -p ~/Applications && ditto /tmp/booth-dmg/Booth.app ~/Applications/Booth.app
+          hdiutil detach /tmp/booth-dmg
+          python3 -I scripts/smoke-release.py --mcp ~/Applications/Booth.app/Contents/Resources/booth-mcp \
+            --models "${{ runner.temp }}/booth-models" --device cpu --decoder-check
+
+      - name: macOS, Claude Desktop bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir mcpb && (cd mcpb && unzip -q ../dl/booth-mac.mcpb)
+          chmod +x mcpb/server/booth-mcp
+          python3 -I scripts/smoke-release.py --mcp mcpb/server/booth-mcp \
+            --models "${{ runner.temp }}/booth-models" --device cpu --resource-dir ~/Applications/Booth.app/Contents/Resources
+
+      # GitHub's Macs are virtual machines, which may not offer Metal; a failure here alone says
+      # nothing about real Macs.
+      - name: macOS, app on Metal (may be unavailable on GitHub's Macs)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 -I scripts/smoke-release.py --mcp ~/Applications/Booth.app/Contents/Resources/booth-mcp \
+            --models "${{ runner.temp }}/booth-models" --device auto
