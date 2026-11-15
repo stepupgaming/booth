@@ -45,7 +45,8 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.3",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "./Entitlements.plist"
     },
     "shortDescription": "Local text to speech and voice cloning",
     "category": "Utility"

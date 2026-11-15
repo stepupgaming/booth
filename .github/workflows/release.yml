@@ -342,6 +342,19 @@ jobs:
           pnpm tauri build --config '${{ matrix.config }}' @extra
           if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
 
+      # The app runs under the hardened runtime. Without the audio-input entitlement macOS turns the
+      # microphone down without asking, and Booth never shows up in Privacy & Security.
+      - name: Check the Mac app may ask for the microphone
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app=$(ls -d target/release/bundle/macos/*.app | head -1)
+          codesign -d --entitlements - --xml "$app" 2>/dev/null | grep -q 'com.apple.security.device.audio-input' \
+            || { echo "::error::$app is missing the com.apple.security.device.audio-input entitlement"; exit 1; }
+          plutil -extract NSMicrophoneUsageDescription raw "$app/Contents/Info.plist" >/dev/null \
+            || { echo "::error::$app has no NSMicrophoneUsageDescription"; exit 1; }
+          echo "Microphone entitlement and usage text are in place."
+
       - name: Collect
         shell: bash
         run: |

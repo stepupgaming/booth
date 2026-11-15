@@ -19,6 +19,13 @@ const PASSAGE =
   "I usually take the long way home, past the old bridge and the bakery on the corner, " +
   "and on a good day I stop for a coffee and just watch the street for a while.";
 
+/** Where each system lets the user turn the microphone back on for Booth. */
+const MIC_SETTINGS: Record<string, string> = {
+  macos: "System Settings > Privacy & Security > Microphone",
+  windows: "Settings > Privacy & security > Microphone",
+  android: "Settings > Apps > Booth > Permissions",
+};
+
 let decodeCtx: AudioContext | null = null;
 async function decode(data: ArrayBuffer): Promise<AudioBuffer> {
   decodeCtx ??= new AudioContext();
@@ -219,6 +226,7 @@ export function CreateVoice() {
   const play = usePlayer((s) => s.play);
   const hifiInstalled = packPresent(overview, "exact");
   const phone = useBooth((s) => isPhone(s.system));
+  const platform = useBooth((s) => s.system?.platform ?? null);
 
   const [src, setSrc] = useState<"clip" | "design">("clip");
   const [step, setStep] = useState(0);
@@ -330,7 +338,13 @@ export function CreateVoice() {
       setRecSecs(0);
       setRecording({ rec, t0: Date.now() });
     } catch (e) {
-      toast.bad(`Couldn’t use the microphone: ${errText(e)}`);
+      const blocked = e instanceof DOMException && e.name === "NotAllowedError";
+      const where = platform ? MIC_SETTINGS[platform] : undefined;
+      toast.bad(
+        blocked && where
+          ? `Booth isn’t allowed to use the microphone. Turn Booth on in ${where}, then try again.`
+          : `Couldn’t use the microphone: ${errText(e)}`,
+      );
     }
   };
 

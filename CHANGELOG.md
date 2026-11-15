@@ -10,6 +10,12 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.4.2 (2026-11-15)
+
+- Fixed on Mac: recording a voice failed with "Couldn't use the microphone" and macOS never
+  asked. Booth now asks for the microphone the first time you press Record.
+- If the microphone is turned off for Booth, the message now says where to turn it back on.
+
 ## 0.4.1 (2026-11-15)
 
 - **Script.** A new tab for whole scripts. Paste a script (or open a .txt) and Booth splits it
