@@ -10,7 +10,7 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
-## 0.4.1 (not released yet)
+## 0.4.1 (2026-11-15)
 
 - **Script.** A new tab for whole scripts. Paste a script (or open a .txt) and Booth splits it
   into lines, finds the speakers (`NARRATOR:`, `GUEST:`) and leaves out notes such as
@@ -31,7 +31,7 @@ Each version starts with a `## <version> (<date>)` heading. A release candidate 
   ffmpeg. The desktop apps now bring their own decoder.
 - Creating a voice has a Language picker and a sample line in that language, so a Spanish
   voice can be tried in Spanish.
-- Every release is now tested on real Windows, Linux and Mac machines before it goes out.
+- Every release is now installed and tested on fresh Windows, Linux and Mac machines.
 
 ## 0.4.0 (2026-11-15)
 
