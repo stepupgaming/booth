@@ -1,4 +1,4 @@
-//! Opening a document in the Script tab: the words out of .docx, .pdf, .epub, .html, .rtf, .md
+//! Opening a document in the Long-form tab: the words out of .docx, .pdf, .epub, .html, .rtf, .md
 //! and plain text, and subtitles (.srt, .vtt) and screenplays (.fountain) turned into the kind of
 //! script `script::parse` reads. Headings come out as `# Heading` lines (the parser leaves them
 //! out of the audio and starts a new paragraph after them) and paragraphs keep a blank line
@@ -15,7 +15,7 @@ use anyhow::{bail, Context, Result};
 /// A file bigger than this isn't a script.
 pub const MAX_BYTES: u64 = 100 * 1024 * 1024;
 
-/// What the Script tab opens (the file picker's list).
+/// What the Long-form tab opens (the file picker's list).
 pub const EXTENSIONS: &[&str] = &[
     "txt", "text", "md", "markdown", "srt", "vtt", "fountain", "docx", "pdf", "epub", "html", "htm", "xhtml", "rtf",
 ];
@@ -68,7 +68,7 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<String> {
         "pdf" => Kind::Pdf,
         "doc" => bail!("Booth can't read old .doc files. Save it as .docx or .txt and open that."),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "mp3" | "wav" | "m4a" | "flac" | "ogg" | "mp4" | "mov" | "zip"
-        | "exe" => bail!("Booth can't open .{ext} files in Script. It opens {}.", list_kinds()),
+        | "exe" => bail!("Booth can't open .{ext} files in Long-form. It opens {}.", list_kinds()),
         "pages" | "odt" => bail!("Booth can't read .{ext} files. Save it as .docx, .pdf or .txt and open that."),
         _ => sniff(bytes).with_context(|| {
             format!("Booth can't open {}. It opens {}.", if ext.is_empty() { "that file" } else { "this kind of file" }, list_kinds())

@@ -153,6 +153,24 @@ function subscribeDraft(f: () => void) {
 const useDraft = () =>
   useSyncExternalStore(subscribeDraft, readDraft, () => "");
 
+/** usePref's key for the open script, so Long-form opens on the paste box after a hand-off. */
+const OPEN_KEY = "booth.booth.script.open";
+
+/** Studio's "Open in Long-form": put this text in the paste box, closing any open script.
+ * The caller then switches tabs. */
+export function openInLongForm(text: string) {
+  setDraft(text);
+  saveDraft();
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(null));
+  } catch {
+    // storage unavailable: Long-form may open on the last script, the text is still in its box
+  }
+}
+
+const TAGLINE =
+  "Paste or open a whole script. It runs in the background, then export WAV or MP3 with captions.";
+
 // ---------- opening files ----------
 
 /** What Booth can read into a script (booth-core doc.rs). */
@@ -515,11 +533,10 @@ function PasteView({
       >
         <header style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <h1 className="h1" style={{ margin: 0, fontSize: 26 }}>
-            Script
+            Long-form
           </h1>
           <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
-            Paste the whole thing, or open a document. Booth makes every line.
-            Write [pause 2s] for a longer pause.
+            {TAGLINE} Write [pause 2s] for a longer pause.
           </div>
         </header>
         <div style={{ display: "flex", gap: 10 }}>
@@ -555,20 +572,22 @@ function PasteView({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <header style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <div className="faint" style={eyebrow}>
-          Script
-        </div>
         <h1 className="h1" style={{ margin: 0, fontSize: 28 }}>
-          Paste your whole script
+          Long-form
         </h1>
         <div
           className="muted"
           style={{ fontSize: 14, maxWidth: 640, lineHeight: 1.55 }}
         >
-          Booth splits it into lines, leaves out notes like [B-roll] and (SFX),
-          and makes every line in one go. Lines starting with a name, like
-          NARRATOR:, get that speaker’s voice. Write [pause 2s] where you want a
-          longer pause.
+          {TAGLINE}
+        </div>
+        <div
+          className="faint small"
+          style={{ maxWidth: 640, lineHeight: 1.55 }}
+        >
+          Booth leaves out notes like [B-roll] and (SFX). Lines starting with a
+          name, like NARRATOR:, get that speaker’s voice. Write [pause 2s] where
+          you want a longer pause.
         </div>
       </header>
       <div
@@ -1220,7 +1239,7 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
           }}
         >
           <div className="faint" style={eyebrow}>
-            Script
+            Long-form
           </div>
           <h1
             className="h1"
@@ -1376,7 +1395,7 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
   );
 }
 
-/** The Script page: paste a whole script, make every line in the background, export the
+/** The Long-form page (the Script view): paste a whole script, make every line in the background, export the
  * voiceover with captions (desktop) or share it (phone). */
 export function Script() {
   const toast = useToast();

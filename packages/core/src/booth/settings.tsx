@@ -539,6 +539,10 @@ function RunOn({ settings, save }: { settings: S | undefined; save: (p: Partial<
   );
 }
 
+const NOFACETUBE_URL = "https://nofacetube.com/?ref=booth-app";
+/** Supports NoFaceTube as a whole. The site opens its tip panel on #support and tags the tip with from=booth-app. */
+const SUPPORT_URL = "https://nofacetube.com/?from=booth-app#support";
+
 function Updates() {
   const toast = useToast();
   const version = useBooth((s) => s.version);
@@ -558,15 +562,29 @@ function Updates() {
       setChecking(false);
     }
   };
+  const open = (url: string) => api.openUrl(url).catch((e) => toast.bad(errText(e)));
   return (
-    <Row
-      sub={update ? `Version ${update.version} is ready. Use the button at the bottom left to install it.` : "Booth checks GitHub for a new version when it starts."}
-      title={version ? `Booth ${version}` : "Booth"}
-    >
-      <button className="btn ghost sm" disabled={checking} onClick={check} type="button">
-        {checking ? "Checking…" : "Check for updates"}
-      </button>
-    </Row>
+    <>
+      <Row
+        sub={update ? `Version ${update.version} is ready. Use the button at the bottom left to install it.` : "Booth checks GitHub for a new version when it starts."}
+        title={version ? `Booth ${version}` : "Booth"}
+      >
+        <button className="btn ghost sm" disabled={checking} onClick={check} type="button">
+          {checking ? "Checking…" : "Check for updates"}
+        </button>
+      </Row>
+      {/* Quiet on purpose: only for people who look for it. No badge, pop-up or reminder. */}
+      <p className="muted small" style={{ margin: 0 }}>
+        Made by{" "}
+        <button className="link" onClick={() => open(NOFACETUBE_URL)} style={{ color: "inherit" }} type="button">
+          NoFaceTube
+        </button>
+        {" · "}
+        <button className="link" onClick={() => open(SUPPORT_URL)} style={{ color: "inherit" }} type="button">
+          Support
+        </button>
+      </p>
+    </>
   );
 }
 

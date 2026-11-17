@@ -110,7 +110,7 @@ function UpdateCard() {
 
 const NAV: { view: View; label: string; short?: string; icon: ReactNode }[] = [
   { view: "studio", label: "Studio", icon: Icon.studio },
-  { view: "script", label: "Script", icon: Icon.script },
+  { view: "script", label: "Long-form", icon: Icon.script },
   { view: "library", label: "Library", icon: Icon.library },
   { view: "voices", label: "Voices", icon: Icon.voices },
   { view: "create", label: "Create a voice", short: "Create", icon: Icon.mic },

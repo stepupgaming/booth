@@ -29,7 +29,7 @@ but can't be reshaped; Shapeable voices accept controls (see list_controls). \
 For several lines or several speakers, use render_script instead of many speak calls. \
 For a whole script the user pasted or wrote (narration, a YouTube or TikTok voiceover, dialogue with NAME: labels), \
 use make_script: it leaves out notes like [B-roll] and (SFX), gives each speaker a voice, and returns one voiceover \
-WAV plus captions (.srt). It also shows up in the Booth app's Script page. \
+WAV plus captions (.srt). It also shows up in the Booth app's Long-form page. \
 create_voice clones a real person's voice: only use it when the user asks, only with a clip of themselves \
 or of someone who agreed, and only if Booth's settings allow it. If a word comes out wrong (a brand name, an acronym), set_pronunciation teaches Booth how to say it everywhere; keep the user's text as written.";
 

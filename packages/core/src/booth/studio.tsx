@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { api, canExact, canShape, errText, fileUrl, LANGUAGE_GROUPS, type Mode, type Take, voiceDesc } from "@workspace/core/booth/api";
+import { openInLongForm } from "@workspace/core/booth/script";
 import { controlById, currentVoice, isPhone, packPresent, round2, toDose, useBooth, useLanguage } from "@workspace/core/booth/store";
 import { DoseSlider, Dropdown, Icon, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
 
@@ -53,6 +54,9 @@ const TEMP_STEADIEST = 0.4;
 const temperatureFor = (steady: number) =>
   steady > 0 ? round2(TEMP_DEFAULT - (steady / 100) * (TEMP_DEFAULT - TEMP_STEADIEST)) : null;
 const MAX_TAKES = 10;
+/** More lines than this after a paste, and Studio mentions Long-form once. */
+const LONG_PASTE = 8;
+const written = (lines: Line[]) => lines.filter((l) => l.text.trim()).length;
 
 const DELIVERY: { key: string; label: string; poles: string }[] = [
   { key: "pitch", label: "Pitch", poles: "lower · higher" },
@@ -162,6 +166,8 @@ export function Studio() {
   const [deliveryOpen, setDeliveryOpen] = usePref("fold.delivery", !phone);
   const [shapeOpen, setShapeOpen] = usePref("fold.shape", !phone);
   const [running, setRunning] = useState<string | null>(null);
+  /** A paste just made this a long script: offer Long-form once, quietly, until they carry on here. */
+  const [longHint, setLongHint] = useState(false);
   const stopRef = useRef(false);
   const linesRef = useRef(lines);
   linesRef.current = lines;
@@ -281,6 +287,7 @@ export function Studio() {
 
   const allDone = lines.every((l) => !l.text.trim() || l.takes.length > 0);
   const generate = () => {
+    setLongHint(false);
     const todo = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.text.trim() && (allDone || l.takes.length === 0));
     run(
       todo.map((x) => x.i),
@@ -339,6 +346,24 @@ export function Studio() {
     const fresh = parts.map((p) => ({ id: newId(), text: p, takes: [], kept: null }));
     const next = [...lines.slice(0, i), ...(cur?.text.trim() ? [cur] : []), ...fresh, ...lines.slice(i + 1)];
     setLines(next);
+    if (written(next) > LONG_PASTE) {
+      setLongHint(true);
+    }
+  };
+
+  /** Hand the whole list to Long-form. Lines that already have takes stay here, so no audio is lost. */
+  const moveToLongForm = () => {
+    openInLongForm(
+      lines
+        .map((l) => l.text.trim())
+        .filter(Boolean)
+        .join("\n")
+    );
+    const kept = lines.filter((l) => l.takes.length > 0);
+    setLines(kept.length ? kept : [{ id: newId(), text: "", takes: [], kept: null }]);
+    setSel(0);
+    setLongHint(false);
+    go("script");
   };
 
   const decoder = overview?.settings.decoder ?? "keep2_plain";
@@ -366,7 +391,7 @@ export function Studio() {
 
   return (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-      <section aria-label="Script" style={{ flex: "999 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+      <section aria-label="Lines" style={{ flex: "999 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
         <div
           className="glass"
           style={{ padding: "22px 24px", display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", overflow: "hidden" }}
@@ -404,9 +429,9 @@ export function Studio() {
         </div>
 
         <div className="glass" style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>Script</h1>
-            <span className="faint small">One line per take · paste a whole script to split it into lines</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>Lines</h1>
+            <span className="muted small">Try a few lines, hear a few takes, tune the sound.</span>
           </div>
           {lines.map((l, i) => {
             const on = i === selIdx;
@@ -574,6 +599,14 @@ export function Studio() {
               </div>
             )}
           </div>
+          {longHint && !running && written(lines) > LONG_PASTE ? (
+            <div className="muted small" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span>Long script? Long-form runs it in the background.</span>
+              <button className="btn ghost sm" onClick={moveToLongForm} type="button">
+                Open in Long-form
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {selLine && selLine.takes.length > 0 ? <DriftNote takes={selLine.takes} /> : null}

@@ -10,6 +10,17 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.5.2 (2026-11-17)
+
+- **Script is now called Long-form.** It works the same: paste or open a whole script, Booth
+  makes every line in the background, then you export WAV or MP3 with captions. Studio stays the
+  place to try a few lines, hear a few takes and tune the sound. Each tab now says so at the top.
+- **Pasted a long script into Studio?** When a paste makes more than 8 lines, Studio offers to
+  open them in Long-form. Ignore it and carry on if you'd rather stay; lines that already have
+  takes stay in Studio either way.
+- **Support NoFaceTube.** Settings > Updates has a small "Made by NoFaceTube · Support" line. Support
+  opens nofacetube.com, where you can leave a tip if Booth saves you time. Booth stays free.
+
 ## 0.5.1 (2026-11-17)
 
 - **Fixed: Script froze after a Redo.** Pressing Redo on a line while the script was still
