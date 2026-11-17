@@ -24,15 +24,17 @@ permissions:
 
 env:
   # The ZONOS3-Mini engine (zonos3-server) is built from Zyphra's repo at this commit.
-  ZONOS3_REF: b171b19149d29b8bcc31e0342d5e3b0063dc479b
+  ZONOS3_REF: 96d9e0ec1e39083ed336ac78f24e3dbc93721c0f
   # NVIDIA engine: RTX 20, 30, 40 and 50 series. Booth downloads it on first run when the PC has
   # an NVIDIA card (see crates/booth-core/src/models.rs, which pins this tag and the zip's sha256).
   CUDA_ARCHS: "75;86;89;120"
   CUDA_VERSION: "12.8.1"
-  ENGINE_TAG: engine-b171b19-cuda12.8
+  ENGINE_TAG: engine-96d9e0e-cuda12.8
   # The engines that ship inside the app (CPU on Windows and Linux, Metal on macOS) are kept on this
   # prerelease, so each is compiled once. Change the tag whenever ZONOS3_REF or the build flags change.
-  PORTABLE_TAG: engine-b171b19-portable-1
+  PORTABLE_TAG: engine-96d9e0e-portable-1
+  # The AMD and Intel (Vulkan) engines, one zip per OS.
+  VULKAN_TAG: engine-96d9e0e-vulkan
 
 jobs:
   cuda-engine:
@@ -123,6 +125,118 @@ jobs:
           gh release upload $env:ENGINE_TAG booth-engine.zip --repo ${{ github.repository }} --clobber
           # A rebuilt zip has a new checksum: the one pinned in models.rs must be updated to match.
           Write-Host "sha256: $((Get-FileHash booth-engine.zip -Algorithm SHA256).Hash.ToLower())  size: $((Get-Item booth-engine.zip).Length)"
+
+  # AMD and Intel graphics engine (beta): Booth downloads it only when someone picks
+  # Settings > Run on > AMD or Intel card. Static Vulkan build, as Zyphra's own CI makes it.
+  # models.rs pins this tag and each zip's size and sha256.
+  vulkan-engine:
+    name: Vulkan engine for ${{ matrix.name }} (stored, downloaded by Booth)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+            zip: booth-engine-vulkan-windows.zip
+          - name: Linux
+            os: ubuntu-22.04
+            zip: booth-engine-vulkan-linux.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Look for the stored engine
+        id: stored
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$VULKAN_TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "${{ matrix.zip }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "${{ matrix.zip }} is on $VULKAN_TAG"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No ${{ matrix.zip }} on $VULKAN_TAG yet; building it"
+          fi
+
+      - name: Check out ZONOS3-Mini
+        if: steps.stored.outputs.found != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Zyphra/ZONOS3-Mini
+          ref: ${{ env.ZONOS3_REF }}
+          path: zonos3
+          submodules: recursive
+
+      - name: Install the Vulkan SDK (Windows)
+        if: steps.stored.outputs.found != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 1.4.313.2 bundles the SPIRV-Headers CMake config that ggml-vulkan needs.
+          $ver = "1.4.313.2"
+          curl.exe -L -o VulkanSDK.exe "https://sdk.lunarg.com/sdk/download/$ver/windows/vulkansdk-windows-X64-$ver.exe"
+          if ((Get-Item VulkanSDK.exe).Length -lt 50MB) { throw "Vulkan SDK download failed" }
+          .\VulkanSDK.exe --accept-licenses --default-answer --confirm-command install
+          echo "VULKAN_SDK=C:\VulkanSDK\$ver" >> $env:GITHUB_ENV
+          echo "C:\VulkanSDK\$ver\Bin" >> $env:GITHUB_PATH
+
+      - name: Install the Vulkan SDK (Linux)
+        if: steps.stored.outputs.found != 'true' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc >/dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update
+          sudo apt-get install -y vulkan-sdk ninja-build
+
+      - name: MSVC environment
+        if: steps.stored.outputs.found != 'true' && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build zonos3-server
+        if: steps.stored.outputs.found != 'true'
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            choco install ninja -y --no-progress
+            extra="-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl"
+          else
+            extra="-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
+          fi
+          cmake -S zonos3/servers/ggml -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_CCACHE=OFF $extra
+          cmake --build build -j 4 --target zonos3-server
+
+      - name: Collect and store the engine
+        if: steps.stored.outputs.found != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p engine-dist/laci_heads
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "$(find build -type f -name zonos3-server.exe | head -1)" engine-dist/
+            find build -name '*.dll' -exec cp {} engine-dist/ \;
+            crt="$(cygpath -u "$VCToolsRedistDir")x64"
+            cp "$(ls -d "$crt"/Microsoft.VC*.CRT | head -1)"/*.dll engine-dist/
+          else
+            cp "$(find build -type f -name zonos3-server | head -1)" engine-dist/
+            chmod +x engine-dist/zonos3-server
+            ldd engine-dist/zonos3-server || true
+          fi
+          cp zonos3/assets/laci_heads/*.json engine-dist/laci_heads/
+          cp zonos3/LICENSE engine-dist/LICENSE-ZONOS3.txt
+          ls -la engine-dist
+          # zip keeps the Linux execute bit; Booth's unzip restores it.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            pwsh -NoProfile -Command "Compress-Archive -Path engine-dist/* -DestinationPath '${{ matrix.zip }}' -CompressionLevel Optimal"
+          else
+            (cd engine-dist && zip -r -9 "../${{ matrix.zip }}" .)
+          fi
+          gh release create "$VULKAN_TAG" --repo "${{ github.repository }}" --prerelease --latest=false \
+            --title "AMD and Intel graphics engine ($VULKAN_TAG)" \
+            --notes "zonos3-server (Vulkan) from Zyphra/ZONOS3-Mini@$ZONOS3_REF. Downloaded by Booth when Settings > Run on is set to AMD or Intel card (beta); not an app download." || true
+          gh release upload "$VULKAN_TAG" "${{ matrix.zip }}" --repo "${{ github.repository }}" --clobber
+          # The pinned size and sha256 in models.rs must match.
+          echo "size: $(stat -c %s "${{ matrix.zip }}" 2>/dev/null || wc -c < "${{ matrix.zip }}")  sha256: $(sha256sum "${{ matrix.zip }}" | cut -d' ' -f1)"
 
   app:
     name: Booth for ${{ matrix.name }}
