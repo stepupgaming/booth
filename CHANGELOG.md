@@ -10,7 +10,7 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
-## 0.5.0
+## 0.5.0 (2026-11-17)
 
 - **AMD and Intel graphics cards (beta).** On Windows and Linux, Settings > Run on has
   "AMD or Intel card". Booth downloads a separate graphics engine for it, so the app itself

@@ -581,7 +581,7 @@ export function CreateVoice() {
               <Tile
                 icon={recording ? <span className="dot-live busy" style={{ width: 14, height: 14, borderRadius: 7 }} /> : Icon.micRed}
                 onClick={record}
-                sub={recording ? `Recording ${mmss(recSecs)} · click to stop` : `Read a short passage in ${languageName(language)}`}
+                sub={recording ? `Recording ${mmss(recSecs)} · press to stop` : `Read a short passage in ${languageName(language)}`}
                 title={recording ? "Stop recording" : "Record now"}
               />
               <input
