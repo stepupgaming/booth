@@ -173,16 +173,16 @@ pub const VULKAN_ENGINE_ID: &str = "vulkan-96d9e0e";
 const VULKAN_ENGINE_URL: &str =
     "https://github.com/stepupgaming/booth/releases/download/engine-96d9e0e-vulkan/booth-engine-vulkan-windows.zip";
 #[cfg(windows)]
-pub const VULKAN_ENGINE_SIZE: u64 = 0;
+pub const VULKAN_ENGINE_SIZE: u64 = 20_362_838;
 #[cfg(windows)]
-const VULKAN_ENGINE_SHA256: &str = "";
+const VULKAN_ENGINE_SHA256: &str = "9199f119bf727f83ac70fd32a28bc31124c9a6160e775aae5f7b71169d688e6f";
 #[cfg(not(windows))]
 const VULKAN_ENGINE_URL: &str =
     "https://github.com/stepupgaming/booth/releases/download/engine-96d9e0e-vulkan/booth-engine-vulkan-linux.zip";
 #[cfg(not(windows))]
-pub const VULKAN_ENGINE_SIZE: u64 = 0;
+pub const VULKAN_ENGINE_SIZE: u64 = 20_643_735;
 #[cfg(not(windows))]
-const VULKAN_ENGINE_SHA256: &str = "";
+const VULKAN_ENGINE_SHA256: &str = "7e922f23b050ba457e751f6b4ae9600acea0b25ed3d03888bfc06133372773a0";
 
 /// Where the Vulkan engine lives once downloaded.
 pub fn vulkan_engine_dir() -> PathBuf {

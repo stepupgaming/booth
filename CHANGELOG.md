@@ -10,6 +10,32 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.5.0
+
+- **AMD and Intel graphics cards (beta).** On Windows and Linux, Settings > Run on has
+  "AMD or Intel card". Booth downloads a separate graphics engine for it, so the app itself
+  stays the same size. It's new and we don't have those cards, so please tell us how it went:
+  nofacetube.com/tools/booth/gpu-beta/
+- **Pronunciation list.** Settings > Pronunciation: tell Booth how to say a name, a brand or an
+  acronym once ("SQL" as "sequel"), and every line, script and Claude request uses it. Your
+  scripts keep the words as you typed them.
+- **Export, ready to post.** Save the voiceover as MP3 as well as WAV. "Even out loudness"
+  brings it to YouTube's level (-14 LUFS) with no clipping. Captions can be short, 2 to 4 words
+  at a time for Shorts, TikTok and Reels, and come as .vtt too.
+- **Recording a voice in your language.** Create a voice has a passage to read in each of the
+  43 languages, not only English.
+- A newer engine from Zyphra (ZONOS3-Mini 96d9e0e): numbers, dates, times and prices are read
+  properly in 34 languages ("2,5" in French is "deux virgule cinq").
+
+### Fixed
+
+- Android: recording a voice never asked for the microphone. Booth now asks the first time you
+  press Record.
+- A voice you were making was lost when you switched tabs. It now waits for you, and Start over
+  clears it.
+- The transcript field in Create a voice is gone. Cloning never used it, so it only got in the
+  way.
+
 ## 0.4.2 (2026-11-15)
 
 - Fixed on Mac: recording a voice failed with "Couldn't use the microphone" and macOS never
