@@ -84,11 +84,11 @@ pub enum Pack {
 
 /// The CUDA engine: `booth-engine.zip` on a prerelease of the Booth repo, built by the release
 /// workflow from the same ZONOS3-Mini commit as the bundled CPU engine. Pinned by size and SHA-256.
-pub const CUDA_ENGINE_ID: &str = "cuda-b171b19-12.8";
+pub const CUDA_ENGINE_ID: &str = "cuda-96d9e0e-12.8";
 const CUDA_ENGINE_URL: &str =
-    "https://github.com/stepupgaming/booth/releases/download/engine-b171b19-cuda12.8/booth-engine.zip";
-pub const CUDA_ENGINE_SIZE: u64 = 743_162_920;
-const CUDA_ENGINE_SHA256: &str = "f596df6fe67613c9b2a37ae96ec901a31027f400e990a3ac24ab15678a16ec74";
+    "https://github.com/stepupgaming/booth/releases/download/engine-96d9e0e-cuda12.8/booth-engine.zip";
+pub const CUDA_ENGINE_SIZE: u64 = 747_595_506;
+const CUDA_ENGINE_SHA256: &str = "b882126c586d88dcea5a5642806b077206c6913df63eb0bde277bb5c32460765";
 
 /// Where the CUDA engine lives once downloaded.
 pub fn cuda_engine_dir() -> PathBuf {
