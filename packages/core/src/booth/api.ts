@@ -32,6 +32,19 @@ export interface Settings {
   device: Device;
   /** Language of the text (e.g. "es", "fr_fr"); null = US English. */
   language: string | null;
+  /** Words the voice says differently (booth-core pronounce.rs). */
+  pronunciations: Pronunciation[];
+}
+
+/** One entry of the pronunciation list: where the text has `write`, the voice says `say`. */
+export interface Pronunciation {
+  /** Only for this language (e.g. "es", "en_gb"); missing = every language. */
+  language?: string | null;
+  match_case: boolean;
+  /** How to say it, spelled the way it sounds. */
+  say: string;
+  /** The word or phrase as written. */
+  write: string;
 }
 
 /** A pasted script split into the lines Booth speaks (booth-core script.rs). */
@@ -307,6 +320,9 @@ export const api = {
   starTake: (id: string, starred: boolean) =>
     invoke<Take>("star_take", { id, starred }),
   deleteTake: (id: string) => invoke<void>("delete_take", { id }),
+  /** Say a word in this voice with the saved pronunciation list applied; no take is saved. */
+  hearPronunciation: (text: string, voice: string | null) =>
+    invoke<string>("hear_pronunciation", { text, voice }),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (s: Settings) => invoke<Settings>("save_settings", { s }),
   claudeInfo: () => invoke<ClaudeInfo>("claude_info"),
