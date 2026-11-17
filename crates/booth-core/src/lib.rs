@@ -9,6 +9,7 @@ pub mod drift;
 pub mod engine;
 pub mod models;
 pub mod paths;
+pub mod pronounce;
 pub mod script;
 pub mod settings;
 pub mod studio;

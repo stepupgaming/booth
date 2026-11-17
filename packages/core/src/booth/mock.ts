@@ -207,6 +207,10 @@ let settings: Settings = {
   laci: false,
   device: "auto",
   language: null,
+  pronunciations: [
+    { write: "SQL", say: "sequel", match_case: false },
+    { write: "NoFaceTube", say: "no face tube", match_case: false },
+  ],
 };
 
 const packs: PackInfo[] = [
@@ -574,6 +578,9 @@ export function installMock() {
           return settings;
         case "voice_preview":
           await wait(400);
+          return SAMPLE;
+        case "hear_pronunciation":
+          await wait(600);
           return SAMPLE;
         case "speak":
           await wait(700);

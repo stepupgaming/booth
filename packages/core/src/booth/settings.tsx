@@ -1,9 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { accelWhere, api, type DownloadEvent, errText, gb, type PackInfo, type Settings as S } from "@workspace/core/booth/api";
+import {
+  accelWhere,
+  api,
+  type DownloadEvent,
+  errText,
+  fileUrl,
+  gb,
+  LANGUAGE_GROUPS,
+  type PackInfo,
+  type Pronunciation,
+  type Settings as S,
+} from "@workspace/core/booth/api";
 import { useBooth } from "@workspace/core/booth/store";
-import { Dropdown, Switch, useToast } from "@workspace/core/booth/ui";
+import { Dropdown, Icon, Switch, usePlayer, useToast } from "@workspace/core/booth/ui";
 
 const TOOLS: [string, string][] = [
   ["status", "Is the engine up, which packs are installed"],
@@ -13,6 +24,7 @@ const TOOLS: [string, string][] = [
   ["render_script", "A multi-voice script as one file"],
   ["list_takes", "Recent takes with their settings"],
   ["design_voice", "Save a shaped voice from a preset"],
+  ["set_pronunciation", "Teach Booth how to say a word"],
   ["create_voice", "Clone from a clip (only if you allow it below)"],
 ];
 
@@ -249,6 +261,192 @@ function Models() {
   );
 }
 
+/** The list as saved: no blank rows, no stray spaces. */
+const cleanList = (rows: Pronunciation[]): Pronunciation[] =>
+  rows
+    .filter((r) => r.write.trim())
+    .map((r) => ({
+      write: r.write.trim(),
+      say: r.say.trim(),
+      match_case: r.match_case,
+      ...(r.language ? { language: r.language } : {}),
+    }));
+
+const ANY_LANGUAGE = "";
+
+/** "Say it like this": words the voice reads differently, applied to everything Booth speaks. */
+function Pronunciations({ settings, save }: { settings: S | undefined; save: (p: Partial<S>) => Promise<void> }) {
+  const toast = useToast();
+  const work = useBooth((s) => s.work);
+  const voiceId = useBooth((s) => s.voiceId);
+  const play = usePlayer((s) => s.play);
+  // Rows being edited, blank ones included; saved without the blanks.
+  const [rows, setRows] = useState<Pronunciation[] | null>(null);
+  const [hearing, setHearing] = useState<number | null>(null);
+  // A row just added, to put the cursor in.
+  const [added, setAdded] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (settings && rows === null) {
+      setRows(settings.pronunciations ?? []);
+    }
+  }, [settings, rows]);
+
+  const list = rows ?? [];
+  const persist = async (next: Pronunciation[]) => {
+    const clean = cleanList(next);
+    if (JSON.stringify(clean) !== JSON.stringify(settings?.pronunciations ?? [])) {
+      await save({ pronunciations: clean });
+    }
+  };
+  const edit = (i: number, patch: Partial<Pronunciation>, now = false) => {
+    const next = list.map((r, j) => (j === i ? { ...r, ...patch } : r));
+    setRows(next);
+    if (now) {
+      persist(next);
+    }
+  };
+  const remove = (i: number) => {
+    const next = list.filter((_, j) => j !== i);
+    setRows(next);
+    persist(next);
+  };
+  const hear = async (i: number) => {
+    const row = list[i];
+    if (!row?.write.trim()) {
+      return;
+    }
+    setHearing(i);
+    try {
+      await persist(list);
+      const path = await work(() => api.hearPronunciation(row.write.trim(), voiceId));
+      play(fileUrl(path));
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setHearing(null);
+    }
+  };
+
+  return (
+    <>
+      {list.length === 0 ? (
+        <span className="muted small">No words yet. Add one when a name or an acronym comes out wrong.</span>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {list.map((r, i) => (
+            <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: rows have no id, and order only changes by removal
+              key={i}
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                ...(i > 0 ? { borderTop: "1px solid rgba(255, 255, 255, 0.08)", paddingTop: 12 } : {}),
+              }}
+            >
+              <span
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
+                  gap: 8,
+                  alignItems: "center",
+                  flex: "1 1 280px",
+                }}
+              >
+                <input
+                  aria-label="Write"
+                  className="field"
+                  onBlur={() => persist(list)}
+                  onChange={(e) => edit(i, { write: e.target.value })}
+                  placeholder="Write, like GIF"
+                  ref={(el) => {
+                    if (el && i === added) {
+                      el.focus();
+                      setAdded(null);
+                    }
+                  }}
+                  style={{ minWidth: 0 }}
+                  value={r.write}
+                />
+                <span aria-hidden="true" className="faint">
+                  →
+                </span>
+                <input
+                  aria-label="Say"
+                  className="field"
+                  onBlur={() => persist(list)}
+                  onChange={(e) => edit(i, { say: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      hear(i);
+                    }
+                  }}
+                  placeholder="Say, like jif"
+                  style={{ minWidth: 0 }}
+                  value={r.say}
+                />
+              </span>
+              <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    checked={r.match_case}
+                    className="check"
+                    onChange={() => edit(i, { match_case: !r.match_case }, true)}
+                    style={{ margin: 0 }}
+                    type="checkbox"
+                  />
+                  Match case
+                </label>
+                <Dropdown
+                  groups={LANGUAGE_GROUPS}
+                  label="Language"
+                  onChange={(v) => edit(i, { language: v || null }, true)}
+                  options={[{ value: ANY_LANGUAGE, label: "Any language" }]}
+                  style={{ width: 140 }}
+                  value={r.language ?? ANY_LANGUAGE}
+                />
+                <button
+                  className="btn ghost sm"
+                  disabled={!r.write.trim() || hearing !== null}
+                  onClick={() => hear(i)}
+                  title="Say it with the voice chosen in Studio"
+                  type="button"
+                >
+                  {hearing === i ? <span className="spinner" /> : Icon.play}
+                  Hear it
+                </button>
+                <button
+                  aria-label={`Remove ${r.write || "this word"}`}
+                  className="btn ghost sm icon-btn"
+                  onClick={() => remove(i)}
+                  type="button"
+                >
+                  {Icon.trash}
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div>
+        <button
+          className="btn ghost sm"
+          disabled={!settings}
+          onClick={() => {
+            setRows([...list, { write: "", say: "", match_case: false }]);
+            setAdded(list.length);
+          }}
+          type="button"
+        >
+          {Icon.plus}Add a word
+        </button>
+      </div>
+    </>
+  );
+}
+
 /** Where the AMD and Intel beta asks people to say how it went. */
 const GPU_BETA_URL = "https://nofacetube.com/tools/booth/gpu-beta/";
 
@@ -480,6 +678,13 @@ export function Settings() {
             onChange={(v) => save({ keep_engine_running: v })}
           />
         </Row>
+      </Section>
+
+      <Section
+        sub="Words the voice should say differently, like SQL as sequel. Your text and takes keep the words as you wrote them."
+        title="Pronunciation"
+      >
+        <Pronunciations save={save} settings={settings} />
       </Section>
 
       <Section sub="Booth runs ZONOS3-Mini on this computer. Nothing leaves it." title="Models">

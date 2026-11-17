@@ -508,6 +508,26 @@ async fn speak(a: SpeakArgs) -> Res<Take> {
     studio::speak(&z, &a.text, &opts).await.map_err(err_chain)
 }
 
+/// Say a word from the pronunciation list in this voice (the saved list applied), without
+/// saving a take. Only the newest file is kept.
+#[tauri::command]
+async fn hear_pronunciation(text: String, voice: Option<String>) -> Res<PathBuf> {
+    let z = zonos().await?;
+    let opts = SpeakOptions { voice, via: "app".into(), ..Default::default() };
+    let (_, wav) = studio::speak_audio(&z, &text, &opts).await.map_err(err_chain)?;
+    let dir = paths::home().join("cache");
+    paths::ensure_dir(&dir).map_err(err)?;
+    if let Ok(old) = std::fs::read_dir(&dir) {
+        for f in old.flatten().filter(|f| f.file_name().to_string_lossy().starts_with("pronounce-")) {
+            let _ = std::fs::remove_file(f.path());
+        }
+    }
+    // A new name each time, so the web view doesn't play an older file from its cache.
+    let file = dir.join(format!("pronounce-{}.wav", booth_core::chrono::Utc::now().timestamp_millis()));
+    std::fs::write(&file, wav).map_err(err)?;
+    Ok(file)
+}
+
 #[tauri::command]
 async fn render_script(lines: Vec<ScriptLine>, gap_ms: Option<u32>) -> Res<Take> {
     let z = zonos().await?;
@@ -1045,6 +1065,7 @@ pub fn run() {
             engine_restart,
             list_voices,
             voice_preview,
+            hear_pronunciation,
             create_clone,
             design_voice,
             rename_voice,

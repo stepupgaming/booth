@@ -281,8 +281,11 @@ impl Zonos {
                 _ => "default voice".into(),
             }
         );
-        crate::diag::note(format!("{what}: sent"));
-        let r = self.watched(self.generate_inner(req)).await;
+        // The pronunciation list applies here, the one place text leaves for the engine, so
+        // the app, scripts and Claude all get it while takes keep the words as typed.
+        let spoken = crate::pronounce::for_engine(&req.text, req.language.as_deref());
+        crate::diag::note(format!("{what}{}: sent", if spoken.is_some() { ", pronunciation list applied" } else { "" }));
+        let r = self.watched(self.generate_inner(req, spoken.as_deref())).await;
         let secs = t0.elapsed().as_secs_f64();
         match &r {
             Ok(a) => crate::diag::note(format!(
@@ -294,8 +297,11 @@ impl Zonos {
         r
     }
 
-    async fn generate_inner(&self, req: &GenerateRequest) -> Result<Audio> {
+    async fn generate_inner(&self, req: &GenerateRequest, spoken: Option<&str>) -> Result<Audio> {
         let mut body = serde_json::to_value(req)?;
+        if let Some(text) = spoken {
+            body["text"] = Value::String(text.to_string());
+        }
         body["stream"] = Value::Bool(false);
         body["format"] = Value::String("wav".into());
         let r = self

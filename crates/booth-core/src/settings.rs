@@ -21,6 +21,8 @@ pub struct Settings {
     pub device: Device,
     /// Language of the text (a server code like `es` or `fr_fr`); None = US English.
     pub language: Option<String>,
+    /// Words the voice should say differently ("SQL" as "sequel"); see `pronounce`.
+    pub pronunciations: Vec<crate::pronounce::Pronunciation>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +47,7 @@ impl Default for Settings {
             laci: false,
             device: Device::Auto,
             language: None,
+            pronunciations: Vec::new(),
         }
     }
 }

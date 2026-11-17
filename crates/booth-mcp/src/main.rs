@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use booth_core::{
-    batch, engine, models, paths, settings,
+    batch, engine, models, paths,
+    pronounce::Pronunciation,
+    settings,
     studio::{self, SpeakOptions},
     takes::{self, ScriptLine, Take},
     voices::{self, Consent, Voice, VoiceKind},
@@ -29,7 +31,7 @@ For a whole script the user pasted or wrote (narration, a YouTube or TikTok voic
 use make_script: it leaves out notes like [B-roll] and (SFX), gives each speaker a voice, and returns one voiceover \
 WAV plus captions (.srt). It also shows up in the Booth app's Script page. \
 create_voice clones a real person's voice: only use it when the user asks, only with a clip of themselves \
-or of someone who agreed, and only if Booth's settings allow it.";
+or of someone who agreed, and only if Booth's settings allow it. If a word comes out wrong (a brand name, an acronym), set_pronunciation teaches Booth how to say it everywhere; keep the user's text as written.";
 
 #[derive(Clone)]
 struct Booth {
@@ -125,6 +127,24 @@ struct ListTakesArgs {
     /// How many, newest first (default 10).
     #[serde(default)]
     limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SetPronunciationArgs {
+    /// The word or phrase as written, e.g. "SQL", "GIF", "NoFaceTube".
+    write: String,
+    /// How to say it, spelled the way it sounds, e.g. "sequel", "jif", "no face tube".
+    #[serde(default)]
+    say: String,
+    /// Only when the case matches too ("US" but not "us"). Default false.
+    #[serde(default)]
+    match_case: bool,
+    /// Only for this language (e.g. "en", "es", "fr_fr"). Default: every language.
+    #[serde(default)]
+    language: Option<String>,
+    /// Remove this word from the list instead.
+    #[serde(default)]
+    remove: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -483,6 +503,44 @@ impl Booth {
     async fn list_takes(&self, Parameters(a): Parameters<ListTakesArgs>) -> Result<CallToolResult, ErrorData> {
         let list = takes::list(a.limit.unwrap_or(10).clamp(1, 200));
         ok_json(json!({ "takes": list.iter().map(take_json).collect::<Vec<_>>() }))
+    }
+
+    #[tool(
+        description = "Booth's pronunciation list: words the voice says differently from how they're written (\"SQL\" as \"sequel\"). Every take and script uses it.",
+        annotations(title = "List pronunciations", read_only_hint = true)
+    )]
+    async fn list_pronunciations(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(json!({ "pronunciations": settings::load().pronunciations }))
+    }
+
+    #[tool(
+        description = "Add or change a word in Booth's pronunciation list, so every take says it this way (or remove it with remove=true). The text stays as written; only the voice changes.",
+        annotations(title = "Set pronunciation", read_only_hint = false, destructive_hint = false)
+    )]
+    async fn set_pronunciation(&self, Parameters(a): Parameters<SetPronunciationArgs>) -> Result<CallToolResult, ErrorData> {
+        let write = a.write.trim().to_string();
+        if write.is_empty() {
+            return tool_error("write is empty");
+        }
+        if !a.remove && a.say.trim().is_empty() {
+            return tool_error("say is empty; use remove=true to take a word off the list");
+        }
+        let language = a.language.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        let mut s = settings::load();
+        let same = |p: &Pronunciation| p.write.trim().to_lowercase() == write.to_lowercase() && p.language == language;
+        let before = s.pronunciations.len();
+        s.pronunciations.retain(|p| !same(p));
+        if a.remove {
+            if s.pronunciations.len() == before {
+                return tool_error(format!("\"{write}\" isn't on the list"));
+            }
+        } else {
+            s.pronunciations.push(Pronunciation { write, say: a.say.trim().to_string(), match_case: a.match_case, language });
+        }
+        if let Err(e) = settings::save(&s) {
+            return tool_error(format!("{e:#}"));
+        }
+        ok_json(json!({ "pronunciations": s.pronunciations }))
     }
 
     #[tool(
