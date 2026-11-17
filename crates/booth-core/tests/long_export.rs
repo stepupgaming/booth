@@ -57,6 +57,7 @@ fn job(n: usize) -> String {
                 voice_name: "Rupert".into(),
                 text: format!("Line number {i} says a few words here."),
                 para: i % 10 == 0,
+                pause_ms: 0,
                 state: LineState::Done,
                 seconds: 1.0,
                 seed: None,

@@ -19,6 +19,10 @@ Each version starts with a `## <version> (<date>)` heading. A release candidate 
 - **Pronunciation list.** Settings > Pronunciation: tell Booth how to say a name, a brand or an
   acronym once ("SQL" as "sequel"), and every line, script and Claude request uses it. Your
   scripts keep the words as you typed them.
+- **Open a document.** Script opens Word (.docx), PDF, EPUB, Markdown, HTML, RTF, subtitles
+  (.srt, .vtt) and Fountain screenplays as well as .txt. On a computer you can drop the file
+  onto Booth. Long scripts, such as a whole book chapter, stay quick to scroll and edit.
+- **Pauses.** Type `[pause]` or `[pause 2s]` where you want silence. Booth never reads it aloud.
 - **Export, ready to post.** Save the voiceover as MP3 as well as WAV. "Even out loudness"
   brings it to YouTube's level (-14 LUFS) with no clipping. Captions can be short, 2 to 4 words
   at a time for Shorts, TikTok and Reels, and come as .vtt too.
