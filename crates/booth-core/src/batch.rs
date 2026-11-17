@@ -410,16 +410,25 @@ fn seed() -> u64 {
 /// Make every line that isn't made yet, in order, calling `on_change` after each change.
 /// Returns when every line is made or failed, or after `stop()`.
 pub async fn run(z: &Zonos, id: &str, on_change: impl Fn(&Job)) -> Result<Job> {
-    {
+    // Claim the slot, then let go of RUNNING before anything else: `get` locks it again, and a
+    // std Mutex locked twice on one thread hangs it (a Redo while a run was going froze every
+    // later script call until Booth restarted).
+    let busy = {
         let mut r = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-        match r.as_deref() {
-            Some(other) if other == id => return get(id), // already going; it picks up new work
-            Some(other) => {
-                let title = load(other).map(|j| j.title).unwrap_or_default();
-                bail!("Booth is still making \"{title}\". Stop it first or wait for it to finish.");
+        match r.clone() {
+            Some(other) => Some(other),
+            None => {
+                *r = Some(id.to_string());
+                None
             }
-            None => *r = Some(id.to_string()),
         }
+    };
+    if let Some(other) = busy {
+        if other == id {
+            return get(id); // already going; it picks up new work
+        }
+        let title = load(&other).map(|j| j.title).unwrap_or_default();
+        bail!("Booth is still making \"{title}\". Stop it first or wait for it to finish.");
     }
     let job = load(id)?;
     let lock = job.folder().join("running.pid");
@@ -765,6 +774,20 @@ Warm it up,
         let j = redo(&id, 1, Some("Warm it up.".into())).unwrap();
         assert_eq!(j.lines[1].state, LineState::Waiting);
         assert!(j.exported.is_none() && export(&id, &opts).is_err());
+        // A redo while this script's run is going returns at once (it used to lock RUNNING twice
+        // and hang the thread, and every script call after it).
+        *RUNNING.lock().unwrap() = Some(id.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let id2 = id.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let z = Zonos::new("http://127.0.0.1:9");
+            let _ = tx.send(rt.block_on(run(&z, &id2, |_| {})).map(|j| j.id));
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("run hung with the script already running");
+        assert_eq!(got.unwrap(), id);
+        assert_eq!(running().as_deref(), Some(id.as_str()));
+        *RUNNING.lock().unwrap() = None;
         let _ = std::fs::remove_dir_all(&home);
     }
 
