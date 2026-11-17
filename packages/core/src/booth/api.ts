@@ -49,7 +49,13 @@ export interface Pronunciation {
 
 /** A pasted script split into the lines Booth speaks (booth-core script.rs). */
 export interface ParsedScript {
-  lines: { speaker: string | null; text: string; para: boolean }[];
+  /** `pause_ms`: extra silence before the line, from a [pause 2s] tag (left out when 0). */
+  lines: {
+    speaker: string | null;
+    text: string;
+    para: boolean;
+    pause_ms?: number;
+  }[];
   /** Headings and notes left out of the audio. */
   skipped: string[];
   /** Speaker label ("" = no label) and how many lines it has, in order of appearance. */
@@ -64,6 +70,8 @@ export interface ScriptJobLine {
   voice_name: string;
   text: string;
   para: boolean;
+  /** Extra silence before the line, from a [pause] tag. */
+  pause_ms?: number;
   state: LineState;
   seconds: number;
   seed: number | null;
@@ -94,7 +102,8 @@ export interface ScriptJob {
   created_at: string;
   lines: ScriptJobLine[];
   skipped: string[];
-  source: string;
+  /** The pasted text. Saved next to the job (source.txt), so events and lists leave it out. */
+  source?: string;
   voices: Record<string, string>;
   via: string;
   running: boolean;
@@ -300,6 +309,13 @@ export const api = {
   exportTakes: (ids: string[], gapMs?: number) =>
     invoke<Take>("export_takes", { ids, gapMs }),
   scriptParse: (text: string) => invoke<ParsedScript>("script_parse", { text }),
+  /** A document's text, ready to paste: a path (desktop: picked or dropped) or the bytes, base64. */
+  scriptOpen: (file: { name: string; path?: string; data?: string }) =>
+    invoke<string>("script_open", {
+      name: file.name,
+      path: file.path ?? null,
+      data: file.data ?? null,
+    }),
   /** Save a pasted script (speaker label -> voice id) and start making it in the background. */
   scriptCreate: (
     text: string,

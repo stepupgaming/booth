@@ -87,6 +87,7 @@ struct MakeScriptArgs {
     /// The whole script as written. Lines may start with a speaker label ("NARRATOR:", "Host:");
     /// headings, [bracketed] and (SFX ...) notes, timestamps and markdown are left out, and long
     /// paragraphs are split at sentence ends. Blank lines mark paragraphs (a longer pause).
+    /// [pause], [pause 2s] or [pause 500ms] adds silence there (1 s by default, up to 10 s).
     script: String,
     /// Voice per speaker label, label -> voice id or name from list_voices, e.g. {"NARRATOR": "Rupert", "GUEST": "Maya"}.
     /// Use "" for lines without a label.

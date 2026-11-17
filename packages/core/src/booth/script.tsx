@@ -10,6 +10,7 @@ import {
   type ScriptJobLine,
   type Voice,
 } from "@workspace/core/booth/api";
+import { type DragDropEvent, getCurrentWebview } from "@tauri-apps/api/webview";
 import { isPhone, useBooth } from "@workspace/core/booth/store";
 import {
   Dropdown,
@@ -19,7 +20,18 @@ import {
   usePref,
   useToast,
 } from "@workspace/core/booth/ui";
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  type DragEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 const eyebrow = {
   fontSize: 12,
@@ -42,9 +54,10 @@ const andList = (xs: unknown[]) => {
     : (w[0] ?? "nothing");
 };
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
-/** About how long a line takes to say (2.6 words a second, an easy voiceover pace). */
-const estimate = (lines: { text: string }[]) =>
-  lines.reduce((n, l) => n + words(l.text), 0) / 2.6;
+/** About how long a line takes to say (2.6 words a second, an easy voiceover pace), plus pauses. */
+const estimate = (lines: { text: string; pause_ms?: number }[]) =>
+  lines.reduce((n, l) => n + words(l.text) / 2.6 + (l.pause_ms ?? 0) / 1000, 0);
+const pauseText = (ms: number) => `pause ${Number((ms / 1000).toFixed(1))} s`;
 const secs = (s: number) =>
   s >= 90
     ? `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`
@@ -81,13 +94,129 @@ function pickVoices(
   return out;
 }
 
+// ---------- the draft (kept in memory, saved to storage a moment after typing stops) ----------
+
+const DRAFT_KEY = "booth.booth.script.draft"; // usePref's key, so older drafts still load
+/** Longer drafts (~2 MB in storage) stay in memory only, for this session. */
+const DRAFT_MAX = 1_000_000;
+let draft: string | null = null;
+let draftTimer: ReturnType<typeof setTimeout> | undefined;
+const draftSubs = new Set<() => void>();
+
+function readDraft(): string {
+  if (draft === null) {
+    try {
+      const s = localStorage.getItem(DRAFT_KEY);
+      draft = s ? (JSON.parse(s) as string) : "";
+    } catch {
+      draft = "";
+    }
+  }
+  return draft;
+}
+
+function saveDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = undefined;
+  try {
+    if (!draft || draft.length > DRAFT_MAX) {
+      // too long to keep: don't bring back an older one next time either
+      localStorage.removeItem(DRAFT_KEY);
+    } else {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    }
+  } catch {
+    // storage full or unavailable: the draft stays in memory for this session
+  }
+}
+
+function setDraft(text: string) {
+  draft = text;
+  for (const f of draftSubs) {
+    f();
+  }
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 800);
+}
+
+function subscribeDraft(f: () => void) {
+  draftSubs.add(f);
+  window.addEventListener("pagehide", saveDraft);
+  return () => {
+    draftSubs.delete(f);
+    if (draftTimer !== undefined) {
+      saveDraft();
+    }
+  };
+}
+
+const useDraft = () =>
+  useSyncExternalStore(subscribeDraft, readDraft, () => "");
+
+// ---------- opening files ----------
+
+/** What Booth can read into a script (booth-core doc.rs). */
+const DOC_EXT = [
+  "txt",
+  "text",
+  "md",
+  "markdown",
+  "srt",
+  "vtt",
+  "fountain",
+  "docx",
+  "pdf",
+  "epub",
+  "html",
+  "htm",
+  "xhtml",
+  "rtf",
+];
+const ACCEPT = [
+  ...DOC_EXT.map((e) => `.${e}`),
+  "text/plain",
+  "text/markdown",
+  "text/html",
+  "application/pdf",
+  "application/epub+zip",
+  "application/rtf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+].join(",");
+const extOf = (name: string) => name.toLowerCase().split(".").pop() ?? "";
+const SLASH = /[\\/]/;
+const baseName = (path: string) => path.split(SLASH).pop() ?? path;
+/** A long document waits a little longer for typing to stop before it is split again. */
+const parseDelay = (n: number) => {
+  if (n > 50_000) {
+    return 500;
+  }
+  return n > 10_000 ? 300 : 180;
+};
+
+const CHUNK = 32_768;
+
+function base64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(s);
+}
+
+/** A picked or dropped file: a File (picker, browser) or a path (desktop drop). */
+type DocSource = File | { name: string; path: string };
+
 // ---------- pasting ----------
 
 function PasteView({
   onStarted,
+  onOpen,
+  opening,
   recent,
 }: {
   onStarted: (j: ScriptJob) => void;
+  onOpen: (f: DocSource) => void;
+  opening: boolean;
   recent: ScriptJob[];
 }) {
   const voices = useBooth((s) => s.voices);
@@ -96,7 +225,8 @@ function PasteView({
   const work = useBooth((s) => s.work);
   const phone = isPhone(system);
   const toast = useToast();
-  const [text, setText] = usePref("booth.script.draft", "");
+  const text = useDraft();
+  const setText = setDraft;
   const [chosen, setChosen] = usePref<Record<string, string>>(
     "booth.script.voices",
     {}
@@ -110,13 +240,17 @@ function PasteView({
       setParsed(null);
       return;
     }
+    let alive = true;
     const t = setTimeout(() => {
       api
         .scriptParse(text)
-        .then(setParsed)
-        .catch(() => setParsed(null));
-    }, 180);
-    return () => clearTimeout(t);
+        .then((p) => alive && setParsed(p))
+        .catch(() => alive && setParsed(null));
+    }, parseDelay(text.length));
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
   }, [text]);
 
   const speakers = parsed?.speakers.map(([s]) => s) ?? [];
@@ -132,13 +266,25 @@ function PasteView({
     hint: v.kind === "default" ? undefined : "yours",
   }));
 
-  const openTxt = async (e: ChangeEvent<HTMLInputElement>) => {
+  const openPicked = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = "";
     if (f) {
-      setText(await f.text());
+      onOpen(f);
     }
   };
+  const openButton = (className: string, style?: CSSProperties) => (
+    <button
+      className={className}
+      disabled={opening}
+      onClick={() => file.current?.click()}
+      style={style}
+      type="button"
+    >
+      {opening ? <span className="spinner" /> : null}
+      Open a file
+    </button>
+  );
   const paste = async () => {
     try {
       const t = await navigator.clipboard.readText();
@@ -348,9 +494,9 @@ function PasteView({
         value={text}
       />
       <input
-        accept=".txt,.md,.srt,.fountain,text/plain"
+        accept={ACCEPT}
         hidden
-        onChange={openTxt}
+        onChange={openPicked}
         ref={file}
         type="file"
       />
@@ -372,7 +518,8 @@ function PasteView({
             Script
           </h1>
           <div className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
-            Paste the whole thing. Booth makes every line.
+            Paste the whole thing, or open a document. Booth makes every line.
+            Write [pause 2s] for a longer pause.
           </div>
         </header>
         <div style={{ display: "flex", gap: 10 }}>
@@ -384,14 +531,7 @@ function PasteView({
           >
             Paste
           </button>
-          <button
-            className="btn ghost"
-            onClick={() => file.current?.click()}
-            style={{ flex: 1, justifyContent: "center" }}
-            type="button"
-          >
-            Open a .txt
-          </button>
+          {openButton("btn ghost", { flex: 1, justifyContent: "center" })}
         </div>
         {box}
         <section
@@ -427,7 +567,8 @@ function PasteView({
         >
           Booth splits it into lines, leaves out notes like [B-roll] and (SFX),
           and makes every line in one go. Lines starting with a name, like
-          NARRATOR:, get that speaker’s voice.
+          NARRATOR:, get that speaker’s voice. Write [pause 2s] where you want a
+          longer pause.
         </div>
       </header>
       <div
@@ -461,13 +602,7 @@ function PasteView({
           >
             <span style={{ fontSize: 15, fontWeight: 600 }}>Your script</span>
             <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="btn ghost sm"
-                onClick={() => file.current?.click()}
-                type="button"
-              >
-                Open a .txt
-              </button>
+              {openButton("btn ghost sm")}
               <button
                 className="btn ghost sm"
                 disabled={!text}
@@ -479,8 +614,9 @@ function PasteView({
             </div>
           </div>
           {box}
-          <div className="faint small">
-            Long paragraphs are split at sentence ends.
+          <div className="faint small" style={{ lineHeight: 1.5 }}>
+            Long paragraphs are split at sentence ends. Open or drop a Word
+            file, PDF, ebook, web page or text file.
           </div>
         </section>
         <section
@@ -583,13 +719,33 @@ const PARA_GAPS = [
   { value: "1000", label: "1 s" },
 ];
 
-function LineRow({
-  job,
+/** A row redraws only when its own line changes, not on every line of a long script. */
+const sameRow = (
+  a: { jobId: string; line: ScriptJobLine; i: number; phone: boolean },
+  b: { jobId: string; line: ScriptJobLine; i: number; phone: boolean }
+) =>
+  a.jobId === b.jobId &&
+  a.i === b.i &&
+  a.phone === b.phone &&
+  a.line.state === b.line.state &&
+  a.line.version === b.line.version &&
+  a.line.text === b.line.text &&
+  a.line.seconds === b.line.seconds &&
+  a.line.path === b.line.path &&
+  a.line.error === b.line.error &&
+  a.line.drifted === b.line.drifted &&
+  a.line.speaker === b.line.speaker &&
+  a.line.voice_name === b.line.voice_name &&
+  a.line.para === b.line.para &&
+  a.line.pause_ms === b.line.pause_ms;
+
+const LineRow = memo(function LineRow({
+  jobId,
   line,
   i,
   phone,
 }: {
-  job: ScriptJob;
+  jobId: string;
   line: ScriptJobLine;
   i: number;
   phone: boolean;
@@ -601,7 +757,7 @@ function LineRow({
   const redo = async (text?: string) => {
     setEditing(false);
     try {
-      await api.scriptRedo(job.id, i, text);
+      await api.scriptRedo(jobId, i, text);
     } catch (e) {
       toast.bad(errText(e));
     }
@@ -610,140 +766,157 @@ function LineRow({
   const waiting = line.state === "waiting";
   return (
     <div
-      className={making ? "tile on" : "tile"}
       style={{
-        padding: phone ? "10px 12px" : "12px 14px",
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
+        marginTop: line.para && i > 0 ? 10 : undefined,
+        // long scripts: rows off screen aren't laid out until scrolled to
+        contentVisibility: "auto",
+        containIntrinsicSize: "auto 64px",
       }}
     >
-      <span
-        className="mono"
-        style={{
-          color: "var(--b-fainter)",
-          fontSize: 12,
-          width: 18,
-          flex: "none",
-        }}
-      >
-        {String(i + 1).padStart(2, "0")}
-      </span>
+      {line.pause_ms && i > 0 ? (
+        <div
+          className="mono faint"
+          style={{ fontSize: 11.5, padding: "0 0 6px 44px" }}
+        >
+          {pauseText(line.pause_ms)}
+        </div>
+      ) : null}
       <div
+        className={making ? "tile on" : "tile"}
         style={{
-          flex: 1,
-          minWidth: 0,
+          padding: phone ? "10px 12px" : "12px 14px",
           display: "flex",
-          flexDirection: "column",
-          gap: 3,
+          alignItems: "center",
+          gap: 12,
         }}
       >
-        {phone ? null : (
-          <span className="faint small">
-            {line.speaker ? (
-              <>
-                <span className="mono">{line.speaker}</span> ·{" "}
-              </>
-            ) : null}
-            {line.voice_name}
-            {line.drifted ? (
-              <span className="warn"> · may not sound like the voice</span>
-            ) : null}
-          </span>
-        )}
-        {editing ? (
-          <input
-            aria-label={`Line ${i + 1}`}
-            autoFocus
-            className="field"
-            onBlur={() => setEditing(false)}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                redo(draft);
-              } else if (e.key === "Escape") {
-                setEditing(false);
-              }
-            }}
-            value={draft}
-          />
-        ) : (
-          <button
-            aria-label={`Edit line ${i + 1}: ${line.text}`}
-            className="line-pick"
-            disabled={making}
-            onClick={() => {
-              setDraft(line.text);
-              setEditing(true);
-            }}
-            style={{
-              fontSize: phone ? 14 : 15,
-              lineHeight: 1.45,
-              color: waiting ? "var(--b-muted)" : undefined,
-              ...(phone
-                ? {
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }
-                : {}),
-            }}
-            type="button"
-          >
-            {line.text}
-          </button>
-        )}
-        {line.state === "failed" ? (
-          <span className="warn small">
-            {line.error ?? "Couldn’t make this line."}
-          </span>
-        ) : null}
-      </div>
-      {making ? (
         <span
-          className="small"
+          className="mono"
           style={{
-            display: "inline-flex",
-            gap: 6,
-            alignItems: "center",
+            color: "var(--b-fainter)",
+            fontSize: 12,
+            width: 18,
             flex: "none",
           }}
         >
-          <span className="spinner" /> Making
+          {String(i + 1).padStart(2, "0")}
         </span>
-      ) : waiting ? (
-        <span className="faint small" style={{ flex: "none" }}>
-          Waiting
-        </span>
-      ) : (
-        <>
-          {line.state === "done" ? (
-            <span
-              className="mono small"
-              style={{ color: "var(--b-ok)", flex: "none" }}
-            >
-              {line.seconds.toFixed(1)} s
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
+          }}
+        >
+          {phone ? null : (
+            <span className="faint small">
+              {line.speaker ? (
+                <>
+                  <span className="mono">{line.speaker}</span> ·{" "}
+                </>
+              ) : null}
+              {line.voice_name}
+              {line.drifted ? (
+                <span className="warn"> · may not sound like the voice</span>
+              ) : null}
             </span>
-          ) : null}
-          {src ? <PlayButton label={`line ${i + 1}`} src={src} /> : null}
-          {phone && line.state === "done" ? null : (
+          )}
+          {editing ? (
+            <input
+              aria-label={`Line ${i + 1}`}
+              autoFocus
+              className="field"
+              onBlur={() => setEditing(false)}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  redo(draft);
+                } else if (e.key === "Escape") {
+                  setEditing(false);
+                }
+              }}
+              value={draft}
+            />
+          ) : (
             <button
-              aria-label={`Redo line ${i + 1}`}
-              className="btn ghost sm"
-              onClick={() => redo()}
-              style={{ flex: "none" }}
-              title="Make this line again"
+              aria-label={`Edit line ${i + 1}: ${line.text}`}
+              className="line-pick"
+              disabled={making}
+              onClick={() => {
+                setDraft(line.text);
+                setEditing(true);
+              }}
+              style={{
+                fontSize: phone ? 14 : 15,
+                lineHeight: 1.45,
+                color: waiting ? "var(--b-muted)" : undefined,
+                ...(phone
+                  ? {
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }
+                  : {}),
+              }}
               type="button"
             >
-              {Icon.redo}
-              {phone ? null : line.state === "failed" ? "Try again" : "Redo"}
+              {line.text}
             </button>
           )}
-        </>
-      )}
+          {line.state === "failed" ? (
+            <span className="warn small">
+              {line.error ?? "Couldn’t make this line."}
+            </span>
+          ) : null}
+        </div>
+        {making ? (
+          <span
+            className="small"
+            style={{
+              display: "inline-flex",
+              gap: 6,
+              alignItems: "center",
+              flex: "none",
+            }}
+          >
+            <span className="spinner" /> Making
+          </span>
+        ) : waiting ? (
+          <span className="faint small" style={{ flex: "none" }}>
+            Waiting
+          </span>
+        ) : (
+          <>
+            {line.state === "done" ? (
+              <span
+                className="mono small"
+                style={{ color: "var(--b-ok)", flex: "none" }}
+              >
+                {line.seconds.toFixed(1)} s
+              </span>
+            ) : null}
+            {src ? <PlayButton label={`line ${i + 1}`} src={src} /> : null}
+            {phone && line.state === "done" ? null : (
+              <button
+                aria-label={`Redo line ${i + 1}`}
+                className="btn ghost sm"
+                onClick={() => redo()}
+                style={{ flex: "none" }}
+                title="Make this line again"
+                type="button"
+              >
+                {Icon.redo}
+                {phone ? null : line.state === "failed" ? "Try again" : "Redo"}
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
-}
+}, sameRow);
 
 function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
   const system = useBooth((s) => s.system);
@@ -781,7 +954,10 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
   const failed = job.lines.filter((l) => l.state === "failed").length;
   const makingAt = job.lines.findIndex((l) => l.state === "making");
   const allDone = done === n;
-  const seconds = job.lines.reduce((s, l) => s + l.seconds, 0);
+  const seconds = job.lines.reduce(
+    (s, l) => s + l.seconds + (l.pause_ms ?? 0) / 1000,
+    0
+  );
   const options: ScriptExportOptions = {
     gap_ms: Number(gap),
     para_gap_ms: Number(paraGap),
@@ -1165,12 +1341,13 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
           }}
         >
           {job.lines.map((l, i) => (
-            <div
+            <LineRow
+              i={i}
+              jobId={job.id}
               key={`${i}-${l.version}`}
-              style={l.para && i > 0 ? { marginTop: 10 } : undefined}
-            >
-              <LineRow i={i} job={job} line={l} phone={phone} />
-            </div>
+              line={l}
+              phone={phone}
+            />
           ))}
           {job.skipped.length ? (
             <details className="tile" style={{ padding: "10px 14px" }}>
@@ -1207,6 +1384,151 @@ export function Script() {
   const [job, setJob] = useState<ScriptJob | null>(null);
   const [recent, setRecent] = useState<ScriptJob[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [opening, setOpening] = useState(false);
+  /** A file is being dragged over the window (the name, when the app knows it). */
+  const [dragging, setDragging] = useState<string | null>(null);
+  const dragDepth = useRef(0);
+
+  /** Read a document into the draft (and back to the paste box if a script is open). */
+  const openDoc = useCallback(
+    async (f: DocSource) => {
+      // booth-core says which kinds it opens when it can't read one (and sniffs files without
+      // an extension, which Android pickers sometimes hand over).
+      setOpening(true);
+      try {
+        const text = await api.scriptOpen(
+          f instanceof File
+            ? {
+                name: f.name,
+                data: base64(new Uint8Array(await f.arrayBuffer())),
+              }
+            : f
+        );
+        setDraft(text);
+        setOpenId(null);
+        setJob(null);
+      } catch (e) {
+        toast.bad(errText(e));
+      } finally {
+        setOpening(false);
+      }
+    },
+    [toast, setOpenId]
+  );
+
+  // Desktop: the window hands over dropped files as paths. Only while this page shows.
+  useEffect(() => {
+    const tauri = (
+      window as unknown as { __TAURI_INTERNALS__?: { metadata?: unknown } }
+    ).__TAURI_INTERNALS__;
+    if (!tauri?.metadata) {
+      return; // the browser preview uses the page's own drop events below
+    }
+    let dead = false;
+    let un: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent((ev: { payload: DragDropEvent }) => {
+        const p = ev.payload;
+        if (p.type === "enter") {
+          const path = p.paths[0];
+          setDragging(path ? baseName(path) : "");
+        } else if (p.type === "leave") {
+          setDragging(null);
+        } else if (p.type === "drop") {
+          setDragging(null);
+          const path =
+            p.paths.find((x: string) => DOC_EXT.includes(extOf(x))) ??
+            p.paths[0];
+          if (path) {
+            openDoc({ name: baseName(path), path });
+          }
+        }
+      })
+      .then((f) => {
+        if (dead) {
+          f();
+        } else {
+          un = f;
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      dead = true;
+      un?.();
+      setDragging(null);
+    };
+  }, [openDoc]);
+
+  const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes("Files");
+  const dropProps = {
+    onDragEnter: (e: DragEvent) => {
+      if (hasFiles(e)) {
+        dragDepth.current += 1;
+        setDragging("");
+      }
+    },
+    onDragOver: (e: DragEvent) => {
+      if (hasFiles(e)) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (hasFiles(e)) {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (!dragDepth.current) {
+          setDragging(null);
+        }
+      }
+    },
+    onDrop: (e: DragEvent) => {
+      if (!hasFiles(e)) {
+        return;
+      }
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(null);
+      const f = e.dataTransfer.files[0];
+      if (f) {
+        openDoc(f);
+      }
+    },
+  };
+  const dropHint =
+    dragging === null ? null : (
+      <div
+        aria-hidden
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 50,
+          pointerEvents: "none",
+          padding: 14,
+          background: "rgba(8,8,10,0.55)",
+          backdropFilter: "blur(2px)",
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            borderRadius: 22,
+            border: "2px dashed #f0202a",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 20, fontWeight: 600 }}>Drop to open</span>
+          <span className="muted small">
+            {dragging.includes(".") && !DOC_EXT.includes(extOf(dragging))
+              ? `Booth can’t read ${dragging}`
+              : dragging || "Word, PDF, ebook, web page or text"}
+          </span>
+        </div>
+      </div>
+    );
 
   useEffect(() => {
     let alive = true;
@@ -1250,28 +1572,32 @@ export function Script() {
   if (!loaded) {
     return null;
   }
-  if (job) {
-    return (
-      <JobView
-        job={job}
-        onNew={() => {
-          setOpenId(null);
-          setJob(null);
-          api
-            .scriptList(6)
-            .then(setRecent)
-            .catch(() => undefined);
-        }}
-      />
-    );
-  }
   return (
-    <PasteView
-      onStarted={(j) => {
-        setOpenId(j.id);
-        setJob(j);
-      }}
-      recent={recent}
-    />
+    <div {...dropProps} style={{ minHeight: "100%" }}>
+      {job ? (
+        <JobView
+          job={job}
+          onNew={() => {
+            setOpenId(null);
+            setJob(null);
+            api
+              .scriptList(6)
+              .then(setRecent)
+              .catch(() => undefined);
+          }}
+        />
+      ) : (
+        <PasteView
+          onOpen={openDoc}
+          onStarted={(j) => {
+            setOpenId(j.id);
+            setJob(j);
+          }}
+          opening={opening}
+          recent={recent}
+        />
+      )}
+      {dropHint}
+    </div>
   );
 }

@@ -358,10 +358,41 @@ const NOTE =
 const LABEL =
   /^\s*(?:\*\*)?([A-Za-z][\w .'-]{0,24}?)(?:\s*\((?:V\.?O\.?|O\.?S\.?)\))?(?:\*\*)?\s*:\s*(.+)$/;
 
+/** [pause], [pause 2s], (pause 500ms): like script.rs, 1 s by default, 0.1 to 10 s. */
+const PAUSE =
+  /[[(]\s*pause(?:\s+(\d+(?:\.\d+)?)\s*(ms|s|secs?|seconds?)?)?\s*[\])]/gi;
+
+/** Subtitle cue numbers and timings, which the preview drops when opening .srt and .vtt. */
+const CUE_LINE = /^\d+$|-->|^WEBVTT/;
+const SCAN = /scan/i;
+
+function pauseMs(n?: string, unit?: string): number {
+  const v =
+    n === undefined
+      ? 1000
+      : Number(n) * (unit?.toLowerCase() === "ms" ? 1 : 1000);
+  return Math.min(10_000, Math.max(100, Math.round(v)));
+}
+
+/** A line cut at its pause tags: each piece with the pause before it. */
+function splitPauses(line: string): [number, string][] {
+  const out: [number, string][] = [];
+  let pause = 0;
+  let from = 0;
+  for (const m of line.matchAll(PAUSE)) {
+    out.push([pause, line.slice(from, m.index)]);
+    pause = pauseMs(m[1], m[2]);
+    from = (m.index ?? 0) + m[0].length;
+  }
+  out.push([pause, line.slice(from)]);
+  return out;
+}
+
 function parseScript(text: string): ParsedScript {
   const out: ParsedScript = { lines: [], skipped: [], speakers: [] };
   const counts = new Map<string, number>();
   let para = false;
+  let pending = 0;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw
       .replace(/\*\*|__/g, "")
@@ -369,6 +400,12 @@ function parseScript(text: string): ParsedScript {
       .trim();
     if (!line) {
       para = out.lines.length > 0;
+      continue;
+    }
+    if (!line.replace(PAUSE, "").trim()) {
+      for (const [p] of splitPauses(line).slice(1)) {
+        pending = Math.min(10_000, pending + p);
+      }
       continue;
     }
     if (line.startsWith("#") || NOTE.test(line)) {
@@ -381,16 +418,26 @@ function parseScript(text: string): ParsedScript {
         ? (m[1] ?? "").trim()
         : null;
     const body = speaker && m ? (m[2] ?? "") : line;
-    // Like script.rs: only paragraphs over 180 characters split, at sentence ends.
-    const parts =
-      body.length > 180
-        ? (body.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g) ?? [body])
-        : [body];
-    for (const text of parts) {
-      if (text.trim()) {
-        out.lines.push({ speaker, text: text.trim(), para });
-        para = false;
-        counts.set(speaker ?? "", (counts.get(speaker ?? "") ?? 0) + 1);
+    for (const [p, piece] of splitPauses(body)) {
+      pending = Math.min(10_000, pending + p);
+      // Like script.rs: only paragraphs over 180 characters split, at sentence ends.
+      const parts =
+        piece.length > 180
+          ? (piece.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g) ?? [piece])
+          : [piece];
+      for (const text of parts) {
+        if (text.trim()) {
+          const pause = out.lines.length ? pending : 0;
+          out.lines.push({
+            speaker,
+            text: text.trim(),
+            para,
+            ...(pause ? { pause_ms: pause } : {}),
+          });
+          para = false;
+          pending = 0;
+          counts.set(speaker ?? "", (counts.get(speaker ?? "") ?? 0) + 1);
+        }
       }
     }
   }
@@ -440,7 +487,7 @@ async function runJob(id: string) {
 
 function sampleJob(): ScriptJob {
   const src =
-    "# Why your phone dies in the cold\n\n[B-roll: phone at 1%]\n\nNARRATOR: You walk outside, it's minus ten, and your phone drops from 40 percent to zero. It isn't broken.\n\nQUOTE: Warm it up, and most of that charge comes back.";
+    "# Why your phone dies in the cold\n\n[B-roll: phone at 1%]\n\nNARRATOR: You walk outside, it's minus ten, and your phone drops from 40 percent to zero. [pause 1.5s] It isn't broken.\n\nQUOTE: Warm it up, and most of that charge comes back.";
   const p = parseScript(src);
   return {
     id: "2026-11-14_101500_why-your-phone-dies-in-the-cold",
@@ -670,6 +717,39 @@ export function installMock() {
         }
         case "script_parse":
           return parseScript(p.text);
+        case "script_open": {
+          // The preview reads plain-text kinds; the app reads the rest in Rust (booth-core doc.rs).
+          const name = String(p.name);
+          const ext = name.toLowerCase().split(".").pop() ?? "";
+          if (ext === "pdf" && SCAN.test(name)) {
+            throw "This PDF is scanned images, so there's no text to read.";
+          }
+          if (
+            ![
+              "txt",
+              "text",
+              "md",
+              "markdown",
+              "srt",
+              "vtt",
+              "fountain",
+            ].includes(ext)
+          ) {
+            throw `The preview can't read .${ext} files. The app can.`;
+          }
+          const bytes = Uint8Array.from(atob(p.data ?? ""), (c) =>
+            c.charCodeAt(0)
+          );
+          let text = new TextDecoder().decode(bytes);
+          if (ext === "srt" || ext === "vtt") {
+            text = text
+              .split("\n")
+              .filter((l) => !CUE_LINE.test(l.trim()))
+              .join("\n");
+          }
+          await wait(250);
+          return text.trim();
+        }
         case "script_create": {
           const parsed = parseScript(p.text);
           if (!parsed.lines.length) {
