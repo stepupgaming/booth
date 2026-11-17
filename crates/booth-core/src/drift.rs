@@ -7,6 +7,14 @@
 //! never drifted in 340 renders, so only Exact takes are checked. Moods move the voice on purpose,
 //! so the cutoff drops with the engine's identity curve for each control, squared: in Exact, a
 //! mood moves the voice about that much further than the curve (measured on Shapeable) says.
+//!
+//! Retested on Rupert, Cillian and Imogen (2026-11-17, 162 Exact takes, 6 seeds each): under
+//! about 1.5 s the voiceprint can't tell voices apart (a take's match with its own voice was
+//! 0.05 to 0.6, with other voices up to 0.31), so short takes aren't checked. A built-in voice's
+//! print is now made from its preview clip, the same way a take's is: the engine's stored print
+//! for Cillian matched his own takes at only 0.4, so every Cillian line was made three times and
+//! flagged. From the preview, own takes of 2 s and longer score 0.6 to 0.88 for all three (the
+//! odd outlier at 0.23 to 0.31), and other voices at most 0.41.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +32,8 @@ pub const BASE: f64 = 0.5;
 const FLOOR: f64 = 0.4;
 /// Extra tries after the first take before Booth keeps the closest one.
 pub const RETRIES: u32 = 2;
+/// Takes shorter than this aren't checked: too little voice to match.
+pub const MIN_SECONDS: f64 = 1.5;
 
 /// What the check found for one kept take.
 #[derive(Debug, Clone, Copy)]
@@ -72,8 +82,9 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f64 {
     }
 }
 
-/// The voice's own voiceprint: its saved embedding, or the engine's for a built-in voice
-/// (fetched once per voice). None when the voice has neither.
+/// The voice's own voiceprint: its saved embedding (made from its clip), or for a built-in voice
+/// the print of its preview clip (made once per voice; the engine's stored print if the preview
+/// can't be had). None when the voice has neither.
 pub async fn voiceprint(z: &Zonos, voice: &Voice) -> Option<Vec<f32>> {
     static PRESETS: OnceLock<Mutex<HashMap<String, Vec<f32>>>> = OnceLock::new();
     if let Some(path) = voice.embedding_path() {
@@ -87,7 +98,18 @@ pub async fn voiceprint(z: &Zonos, voice: &Voice) -> Option<Vec<f32>> {
     if let Some(v) = cache.lock().unwrap().get(&id) {
         return Some(v.clone());
     }
-    match z.speaker_embedding(&id).await.and_then(|b| parse_npy_f32(&b)) {
+    let from_preview = async {
+        let wav = z.speaker_preview(&id).await?;
+        parse_npy_f32(&z.embed_clip(&wav, "preview.wav").await?)
+    };
+    let print = match from_preview.await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            crate::diag::note(format!("drift check: no preview print for {}, using the stored one: {e:#}", voice.name));
+            z.speaker_embedding(&id).await.and_then(|b| parse_npy_f32(&b))
+        }
+    };
+    match print {
         Ok(v) => {
             cache.lock().unwrap().insert(id, v.clone());
             Some(v)

@@ -10,6 +10,17 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.5.1 (2026-11-17)
+
+- **Fixed: Script froze after a Redo.** Pressing Redo on a line while the script was still
+  being made, or on two lines quickly, could stop Script from making anything else until you
+  restarted Booth. Redo now joins the run that's going.
+- **Fixed: good takes marked "may not sound like the voice".** Every line in Cillian's voice,
+  and most very short lines ("Okay.", "It worked.") in any voice, were made three times and then
+  flagged even when they sounded right. The drift check now measures built-in voices the same
+  way it measures takes, and leaves lines under a second and a half alone, where there's too
+  little voice to tell.
+
 ## 0.5.0 (2026-11-17)
 
 - **AMD and Intel graphics cards (beta).** On Windows and Linux, Settings > Run on has

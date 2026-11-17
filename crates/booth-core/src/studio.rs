@@ -92,7 +92,8 @@ pub async fn speak_audio(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<(
     // speaking on purpose (gender, age, texture, accent, room, or a designed voice's own shape).
     let check = opts.drift_check
         && req.speaker_mode == Some(SpeakerMode::Reference)
-        && !req.controls.keys().any(|d| cat.needs_shapeable(d));
+        && !req.controls.keys().any(|d| cat.needs_shapeable(d))
+        && takes::wav_seconds(&audio.wav) >= drift::MIN_SECONDS;
     let target = if check { drift::voiceprint(z, &voice).await } else { None };
     let (audio, verdict) = match target {
         Some(t) => {
