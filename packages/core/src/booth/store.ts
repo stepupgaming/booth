@@ -27,6 +27,9 @@ interface BoothState {
   /** A newer Booth, once the startup check finds one. */
   update: UpdateInfo | null;
   version: string | null;
+  /** The Create page holds unsaved work, so it stays mounted (hidden) on other tabs. */
+  createDraft: boolean;
+  setCreateDraft: (draft: boolean) => void;
   checkUpdate: () => Promise<UpdateInfo | null>;
   go: (v: View) => void;
   refresh: () => Promise<Overview | null>;
@@ -51,6 +54,8 @@ export const useBooth = create<BoothState>((set, get) => ({
   catalogError: null,
   update: null,
   version: null,
+  createDraft: false,
+  setCreateDraft: (createDraft) => set({ createDraft }),
   checkUpdate: async () => {
     if (!get().version) {
       api.version().then((version) => set({ version })).catch(() => undefined);

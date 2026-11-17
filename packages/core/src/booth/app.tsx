@@ -8,13 +8,12 @@ import { Script } from "@workspace/core/booth/script";
 import { Settings } from "@workspace/core/booth/settings";
 import { Setup } from "@workspace/core/booth/setup";
 import { Shell } from "@workspace/core/booth/shell";
-import { packPresent, useBooth } from "@workspace/core/booth/store";
+import { packPresent, useBooth, type View } from "@workspace/core/booth/store";
 import { Studio } from "@workspace/core/booth/studio";
 import { ToastHost } from "@workspace/core/booth/ui";
 import { Voices } from "@workspace/core/booth/voices";
 
-function Views() {
-  const view = useBooth((s) => s.view);
+function OtherView({ view }: { view: View }) {
   switch (view) {
     case "script":
       return <Script />;
@@ -22,13 +21,29 @@ function Views() {
       return <Library />;
     case "voices":
       return <Voices />;
-    case "create":
-      return <CreateVoice />;
     case "settings":
       return <Settings />;
     default:
       return <Studio />;
   }
+}
+
+function Views() {
+  const view = useBooth((s) => s.view);
+  // A voice in progress (a clip, test takes, a name) stays mounted, hidden, while another tab is
+  // open, so coming back finds it as it was. Once saved or cleared, leaving the page resets it.
+  const keepCreate = useBooth((s) => s.createDraft);
+  const onCreate = view === "create";
+  return (
+    <>
+      {onCreate || keepCreate ? (
+        <div style={{ display: onCreate ? "contents" : "none" }}>
+          <CreateVoice />
+        </div>
+      ) : null}
+      {onCreate ? null : <OtherView view={view} />}
+    </>
+  );
 }
 
 /** The whole Booth window: first-run setup, then the Studio and friends. */
