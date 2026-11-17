@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use booth_core::{
-    batch, engine, models, paths,
+    audio, batch, captions, engine, models, paths,
     pronounce::Pronunciation,
     settings,
     studio::{self, SpeakOptions},
@@ -100,9 +100,22 @@ struct MakeScriptArgs {
     gap_ms: Option<u32>,
     #[serde(default)]
     paragraph_gap_ms: Option<u32>,
-    /// Also save each line as its own WAV (default false).
+    /// Also save each line as its own file (default false).
     #[serde(default)]
     line_files: bool,
+    /// Save the voiceover and line files as MP3 (128 kbps) instead of WAV (default false).
+    #[serde(default)]
+    mp3: bool,
+    /// Even out loudness: lines at a like level, the voiceover at -14 LUFS with peaks under
+    /// -1 dBTP (default false).
+    #[serde(default)]
+    even_loudness: bool,
+    /// Short captions of 2 to 4 words, for Shorts, TikTok and Reels, instead of sentences (default false).
+    #[serde(default)]
+    short_captions: bool,
+    /// Also write the captions as WebVTT (.vtt) next to the .srt (default false).
+    #[serde(default)]
+    vtt: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -273,6 +286,12 @@ fn script_json(j: &batch::Job, out: Option<&batch::Exported>) -> Value {
     if let Some(o) = out {
         v["voiceover"] = json!(o.voiceover.as_ref().map(|p| p.display().to_string()));
         v["captions"] = json!(o.captions.as_ref().map(|p| p.display().to_string()));
+        if let Some(vtt) = &o.vtt {
+            v["captions_vtt"] = json!(vtt.display().to_string());
+        }
+        if let Some(l) = &o.loudness {
+            v["loudness"] = json!({ "lufs": (l.lufs * 10.0).round() / 10.0, "true_peak_dbtp": (l.true_peak * 10.0).round() / 10.0 });
+        }
         if !o.lines.is_empty() {
             v["line_files"] = json!(o.lines.iter().map(|p| p.display().to_string()).collect::<Vec<_>>());
         }
@@ -308,7 +327,9 @@ async fn make_and_report(z: Zonos, id: &str, o: &batch::ExportOptions) -> Result
         let job = batch::get(id).map_err(fail)?;
         let all_done = job.lines.iter().all(|l| l.state == batch::LineState::Done);
         if all_done {
-            return match batch::export(id, o) {
+            let (export_id, export_o) = (id.to_string(), o.clone());
+            let out = tokio::task::spawn_blocking(move || batch::export(&export_id, &export_o)).await.map_err(fail)?;
+            return match out {
                 Ok(out) => ok_json(script_json(&batch::get(id).map_err(fail)?, Some(&out))),
                 Err(e) => tool_error(format!("{e:#}")),
             };
@@ -454,7 +475,14 @@ impl Booth {
             Ok(j) => j,
             Err(e) => return tool_error(format!("{e:#}")),
         };
-        let mut o = batch::ExportOptions { lines: a.line_files, ..Default::default() };
+        let mut o = batch::ExportOptions {
+            lines: a.line_files,
+            format: if a.mp3 { audio::Format::Mp3 } else { audio::Format::Wav },
+            even_loudness: a.even_loudness,
+            caption_style: if a.short_captions { captions::Style::Short } else { captions::Style::Sentences },
+            vtt: a.vtt,
+            ..Default::default()
+        };
         if let Some(g) = a.gap_ms {
             o.gap_ms = g.min(5000);
         }

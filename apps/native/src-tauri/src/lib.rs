@@ -626,7 +626,12 @@ async fn script_captions(id: String, options: Option<ExportOptions>) -> Res<Stri
 
 #[tauri::command]
 async fn script_export(id: String, options: Option<ExportOptions>) -> Res<Exported> {
-    batch::export(&id, &options.unwrap_or_default()).map_err(err_chain)
+    // A long script takes a while to write (and to even out, read twice more), so it runs off
+    // the async threads.
+    tokio::task::spawn_blocking(move || batch::export(&id, &options.unwrap_or_default()))
+        .await
+        .map_err(err)?
+        .map_err(err_chain)
 }
 
 /// Hand files to another app: Android's share sheet. (Desktop shows them in the folder instead.)

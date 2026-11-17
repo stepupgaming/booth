@@ -2,7 +2,9 @@
 //! voices, takes and settings.
 
 pub mod api;
+pub mod audio;
 pub mod batch;
+pub mod captions;
 pub mod controls;
 pub mod diag;
 pub mod drift;

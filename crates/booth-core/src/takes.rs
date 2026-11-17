@@ -80,8 +80,8 @@ pub fn wav_seconds(wav: &[u8]) -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Save a take's audio and its record. Returns the record with `path` set.
-pub fn save(mut take: Take, wav: &[u8]) -> Result<Take> {
+/// A free `<day>\<HHMMSS>-<slug>.wav` for a new take: `(folder, day, stem)`.
+fn new_place(take: &Take) -> Result<(PathBuf, String, String)> {
     let day = take.created_at.format("%Y-%m-%d").to_string();
     let dir = paths::takes_dir().join(&day);
     paths::ensure_dir(&dir)?;
@@ -92,13 +92,39 @@ pub fn save(mut take: Take, wav: &[u8]) -> Result<Take> {
         n += 1;
         stem = format!("{base}-{n}");
     }
-    let path = dir.join(format!("{stem}.wav"));
-    std::fs::write(&path, wav)?;
+    Ok((dir, day, stem))
+}
+
+fn record(mut take: Take, dir: &Path, day: &str, stem: &str, seconds: f64) -> Result<Take> {
     take.id = format!("{day}_{stem}");
-    take.seconds = wav_seconds(wav);
+    take.seconds = seconds;
     std::fs::write(dir.join(format!("{stem}.json")), serde_json::to_vec_pretty(&take)?)?;
-    take.path = path;
+    take.path = dir.join(format!("{stem}.wav"));
     Ok(take)
+}
+
+/// Save a take's audio and its record. Returns the record with `path` set.
+pub fn save(take: Take, wav: &[u8]) -> Result<Take> {
+    let (dir, day, stem) = new_place(&take)?;
+    std::fs::write(dir.join(format!("{stem}.wav")), wav)?;
+    record(take, &dir, &day, &stem, wav_seconds(wav))
+}
+
+/// Save a take whose audio is already a WAV file on disk (a long voiceover, never read into
+/// memory). The file is moved when `keep` is false, else copied.
+pub fn save_file(take: Take, wav: &Path, keep: bool) -> Result<Take> {
+    let seconds = hound::WavReader::open(wav)
+        .map(|r| r.duration() as f64 / r.spec().sample_rate as f64)
+        .with_context(|| format!("reading {}", wav.display()))?;
+    let (dir, day, stem) = new_place(&take)?;
+    let dst = dir.join(format!("{stem}.wav"));
+    if keep || std::fs::rename(wav, &dst).is_err() {
+        std::fs::copy(wav, &dst)?;
+        if !keep {
+            let _ = std::fs::remove_file(wav);
+        }
+    }
+    record(take, &dir, &day, &stem, seconds)
 }
 
 /// The newest takes first, at most `limit`.
