@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, canExact, canShape, errText, fileUrl, LANGUAGE_GROUPS, languageName, type Take, testLineFor, type Voice } from "@workspace/core/booth/api";
+import {
+  api,
+  canExact,
+  canShape,
+  errText,
+  fileUrl,
+  LANGUAGE_GROUPS,
+  languageName,
+  passageFor,
+  type Take,
+  testLineFor,
+  type Voice,
+} from "@workspace/core/booth/api";
 import { isPhone, packPresent, round2, useBooth, useLanguage } from "@workspace/core/booth/store";
 import { DoseSlider, Dropdown, Icon, Orb, PlayButton, usePlayer, useToast, Wave } from "@workspace/core/booth/ui";
 
@@ -12,12 +24,6 @@ interface Clip {
   buffer: AudioBuffer;
   peaks: number[];
 }
-
-const PASSAGE =
-  "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. " +
-  "People look, but no one ever finds it. Some say there is a pot of gold at one end. " +
-  "I usually take the long way home, past the old bridge and the bakery on the corner, " +
-  "and on a good day I stop for a coffee and just watch the street for a while.";
 
 /** Where each system lets the user turn the microphone back on for Booth. */
 const MIC_SETTINGS: Record<string, string> = {
@@ -239,7 +245,6 @@ export function CreateVoice() {
   const [recording, setRecording] = useState<{ rec: MediaRecorder; t0: number } | null>(null);
   const [recSecs, setRecSecs] = useState(0);
   const [hifi, setHifi] = useState(true);
-  const [transcript, setTranscript] = useState("");
   const [whose, setWhose] = useState<"me" | "consented">("me");
   const [consent, setConsent] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -255,6 +260,13 @@ export function CreateVoice() {
   const [language, saveLanguage] = useLanguage();
   const [testLine, setTestLine] = useState<string | null>(null);
   const line = (testLine ?? testLineFor(language)).trim();
+  const changeLanguage = (code: string) => {
+    // A new language gets its own sample line, unless the person wrote their own.
+    if (testLine !== null && testLine.trim() === testLineFor(language)) {
+      setTestLine(null);
+    }
+    saveLanguage(code).catch((e) => toast.bad(errText(e)));
+  };
   const [tests, setTests] = useState<Take[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [made, setMade] = useState<{ voice: Voice; key: string } | null>(null);
@@ -318,7 +330,9 @@ export function CreateVoice() {
 
   const record = async () => {
     if (recording) {
-      recording.rec.stop();
+      if (recording.rec.state !== "inactive") {
+        recording.rec.stop();
+      }
       return;
     }
     try {
@@ -330,9 +344,11 @@ export function CreateVoice() {
         for (const t of stream.getTracks()) {
           t.stop();
         }
-        setRecording(null);
         const blob = new Blob(chunks, { type: rec.mimeType });
+        // Clear the recording only once the clip is in, so the page counts as work in progress
+        // the whole time (it may be hidden on another tab: see Views in app.tsx).
         await useBuffer("My recording", await blob.arrayBuffer());
+        setRecording(null);
       };
       rec.start();
       setRecSecs(0);
@@ -351,14 +367,77 @@ export function CreateVoice() {
   const dur = clip?.buffer.duration ?? 0;
   const selLen = Math.min(len, dur);
   const selStart = Math.min(start, Math.max(0, dur - selLen));
-  const clipKey = clip ? `${clip.name}|${dur}|${selStart.toFixed(2)}|${selLen.toFixed(2)}|${hifi}|${transcript}` : "";
+  const clipKey = clip ? `${clip.name}|${dur}|${selStart.toFixed(2)}|${selLen.toFixed(2)}|${hifi}` : "";
 
+  // The last "play the selected part" file: replaced (and freed) by the next one.
+  const previewUrl = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      if (previewUrl.current) {
+        URL.revokeObjectURL(previewUrl.current);
+      }
+    },
+    []
+  );
   const previewSelection = () => {
     if (!clip) {
       return;
     }
     const url = URL.createObjectURL(new Blob([wavOf(clip.buffer, selStart, selLen) as BlobPart], { type: "audio/wav" }));
     play(url);
+    if (previewUrl.current) {
+      URL.revokeObjectURL(previewUrl.current);
+    }
+    previewUrl.current = url;
+  };
+
+  // Work in progress keeps this page alive (hidden) on other tabs; see Views in app.tsx.
+  const view = useBooth((s) => s.view);
+  const setCreateDraft = useBooth((s) => s.setCreateDraft);
+  const draft =
+    !saved &&
+    (!!clip ||
+      !!made ||
+      !!recording ||
+      !!busy ||
+      tests.length > 0 ||
+      step > 0 ||
+      name.trim() !== "" ||
+      description.trim() !== "" ||
+      Object.keys(ctrl).length > 0);
+  useEffect(() => {
+    setCreateDraft(draft);
+  }, [draft, setCreateDraft]);
+  useEffect(() => () => setCreateDraft(false), [setCreateDraft]);
+
+  // Leaving the tab: stop a recording (its clip is kept) so the mic isn't left on, and stop
+  // anything this page was playing.
+  useEffect(() => {
+    if (view === "create") {
+      return;
+    }
+    if (recording && recording.rec.state !== "inactive") {
+      recording.rec.stop();
+    }
+    const p = usePlayer.getState();
+    if (p.playing && (p.src === previewUrl.current || tests.some((t) => fileUrl(t.path) === p.src))) {
+      p.stop();
+    }
+  }, [view, recording, tests]);
+
+  const clearDraft = () => {
+    if (made && !saved) {
+      api.deleteVoice(made.voice.id).then(() => loadVoices()).catch(() => undefined);
+    }
+    setMade(null);
+    setClip(null);
+    setName("");
+    setConsent(false);
+    setCtrl({});
+    setBase("");
+    setDescription("");
+    setTestLine(null);
+    reset(src);
   };
 
   const makeTests = async () => {
@@ -387,7 +466,6 @@ export function CreateVoice() {
               name: name.trim() || "New voice",
               audio_base64: base64(wavOf(clip.buffer, selStart, selLen)),
               ext: "wav",
-              transcript: transcript.trim() || null,
               speaker: whose,
               exact: hifi && hifiInstalled,
             })
@@ -503,7 +581,7 @@ export function CreateVoice() {
               <Tile
                 icon={recording ? <span className="dot-live busy" style={{ width: 14, height: 14, borderRadius: 7 }} /> : Icon.micRed}
                 onClick={record}
-                sub={recording ? `Recording ${mmss(recSecs)} · click to stop` : "Read a short passage out loud"}
+                sub={recording ? `Recording ${mmss(recSecs)} · click to stop` : `Read a short passage in ${languageName(language)}`}
                 title={recording ? "Stop recording" : "Record now"}
               />
               <input
@@ -514,12 +592,16 @@ export function CreateVoice() {
                 type="file"
               />
             </div>
+            <div className="lbl" style={{ maxWidth: 260 }}>
+              Language
+              <Dropdown groups={LANGUAGE_GROUPS} label="Language" onChange={changeLanguage} value={language} />
+            </div>
             {recording ? (
-              <div className="tile" style={{ padding: 18, fontSize: 16, lineHeight: 1.7, color: "var(--b-text)" }}>
+              <div className="tile" lang={language.replace("_", "-")} style={{ padding: 18, fontSize: 16, lineHeight: 1.7, color: "var(--b-text)" }}>
                 <div className="muted small" style={{ marginBottom: 6 }}>
                   Read this in your normal voice. About 30 seconds is plenty.
                 </div>
-                {PASSAGE}
+                {passageFor(language)}
               </div>
             ) : null}
             {clip ? (
@@ -658,10 +740,6 @@ export function CreateVoice() {
             );
           })}
           <div className="glass" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-            <label className="lbl">
-              What the clip says, word for word (optional, makes High-fidelity cloning better)
-              <textarea className="field" onChange={(e) => setTranscript(e.target.value)} rows={2} value={transcript} />
-            </label>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
               <span className="muted">Whose voice is it?</span>
               <div aria-label="Whose voice" className="seg" role="group">
@@ -798,13 +876,7 @@ export function CreateVoice() {
               <Dropdown
                 groups={LANGUAGE_GROUPS}
                 label="Language"
-                onChange={(code) => {
-                  // A new language gets its own sample line, unless the person wrote their own.
-                  if (testLine !== null && testLine.trim() === testLineFor(language)) {
-                    setTestLine(null);
-                  }
-                  saveLanguage(code).catch((e) => toast.bad(errText(e)));
-                }}
+                onChange={changeLanguage}
                 value={language}
               />
             </label>
@@ -863,19 +935,7 @@ export function CreateVoice() {
               <button className="btn primary" onClick={() => pickVoice(saved.id)} type="button">
                 Use {saved.name} in the Studio
               </button>
-              <button
-                className="btn ghost"
-                onClick={() => {
-                  setMade(null);
-                  setClip(null);
-                  setName("");
-                  setConsent(false);
-                  setTranscript("");
-                  setCtrl({});
-                  reset(src);
-                }}
-                type="button"
-              >
+              <button className="btn ghost" onClick={clearDraft} type="button">
                 Make another
               </button>
             </div>
@@ -902,6 +962,11 @@ export function CreateVoice() {
         <span className="faint" style={{ fontSize: 13 }}>
           {hint}
         </span>
+        {draft && !busy && !recording ? (
+          <button className="btn ghost" onClick={clearDraft} style={{ marginLeft: "auto" }} type="button">
+            Start over
+          </button>
+        ) : null}
       </div>
     </>
   );

@@ -154,7 +154,8 @@ struct CreateVoiceArgs {
     speaker: String,
     /// Must be true: the user confirmed the speaker agreed to this clone.
     consent_confirmed: bool,
-    /// The exact words spoken in the clip, if known.
+    /// Optional. What the clip says, saved with the voice as a note only. Cloning doesn't use it, so leave it out
+    /// unless the user wants it kept.
     #[serde(default)]
     transcript: Option<String>,
 }
