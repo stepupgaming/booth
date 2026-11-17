@@ -40,6 +40,9 @@ pub struct JobLine {
     /// Starts a new paragraph (a longer pause before it).
     #[serde(default)]
     pub para: bool,
+    /// Extra silence before the line from pause tags in the script, in ms.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pause_ms: u32,
     pub state: LineState,
     #[serde(default)]
     pub seconds: f64,
@@ -68,8 +71,10 @@ pub struct Job {
     /// Headings and notes left out of the audio.
     #[serde(default)]
     pub skipped: Vec<String>,
-    /// The script as pasted.
-    #[serde(default)]
+    /// The script as pasted. Kept once in `source.txt` next to script.json rather than in it, so
+    /// saving a long script's progress after every line doesn't rewrite the whole text each time
+    /// (older script.json files still have it, and it moves out on their next save).
+    #[serde(default, skip_serializing)]
     pub source: String,
     /// Speaker label -> voice id (`""` for lines without a label).
     #[serde(default)]
@@ -168,9 +173,17 @@ fn read(id: &str) -> Result<Job> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 fn write(job: &Job) -> Result<()> {
     let dir = job.folder();
     paths::ensure_dir(&dir)?;
+    let source = dir.join("source.txt");
+    if !job.source.is_empty() && !source.exists() {
+        std::fs::write(&source, &job.source)?;
+    }
     let tmp = dir.join("script.json.tmp");
     std::fs::write(&tmp, serde_json::to_vec_pretty(job)?)?;
     std::fs::rename(&tmp, dir.join("script.json"))?;
@@ -289,6 +302,7 @@ pub async fn create(z: &Zonos, source: &str, voices: &BTreeMap<String, String>, 
             voice_name: found[&voice_for(&l.speaker)].name.clone(),
             text: l.text.clone(),
             para: l.para,
+            pause_ms: l.pause_ms,
             state: LineState::Waiting,
             seconds: 0.0,
             seed: None,
@@ -320,7 +334,8 @@ pub async fn create(z: &Zonos, source: &str, voices: &BTreeMap<String, String>, 
 pub fn redo(id: &str, index: usize, text: Option<String>) -> Result<Job> {
     update(id, |j| {
         let line = j.lines.get_mut(index).context("no such line")?;
-        if let Some(t) = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        // Typed words are spoken as they are, except pause tags and notes (never read out).
+        if let Some(t) = text.map(|t| script::spoken_only(&t)).filter(|t| !t.is_empty()) {
             line.text = t;
         }
         line.state = LineState::Waiting;
@@ -470,9 +485,9 @@ pub async fn run(z: &Zonos, id: &str, on_change: impl Fn(&Job)) -> Result<Job> {
     Ok(job)
 }
 
-/// Where each made line sits in the joined audio, as the pause before it.
+/// Where each made line sits in the joined audio, as the pause before it (pause tags add to it).
 fn gaps(job: &Job, o: &ExportOptions) -> Vec<u32> {
-    job.lines.iter().map(|l| if l.para { o.para_gap_ms.max(o.gap_ms) } else { o.gap_ms }).collect()
+    job.lines.iter().map(|l| if l.para { o.para_gap_ms.max(o.gap_ms) } else { o.gap_ms } + l.pause_ms).collect()
 }
 
 /// Captions for a script whose lines are all made, from the lines' lengths (no audio read).
@@ -620,6 +635,7 @@ mod tests {
                     voice_name: if i == 0 { "Cillian".into() } else { "Imogen".into() },
                     text: l.text.clone(),
                     para: l.para,
+                    pause_ms: l.pause_ms,
                     state: LineState::Done,
                     seconds: 1.0 + i as f64,
                     seed: Some(1),

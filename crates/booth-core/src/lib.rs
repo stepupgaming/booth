@@ -5,6 +5,7 @@ pub mod api;
 pub mod batch;
 pub mod controls;
 pub mod diag;
+pub mod doc;
 pub mod drift;
 pub mod engine;
 pub mod models;

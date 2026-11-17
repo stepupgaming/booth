@@ -524,6 +524,24 @@ async fn script_parse(text: String) -> Res<script::Parsed> {
     Ok(script::parse(&text, &[]))
 }
 
+/// Read a document (.docx, .pdf, .epub, .md, .html, .rtf, .srt, .fountain, .txt...) as script text.
+/// Desktop sends a path (picked or dropped); Android and the file picker send the bytes, base64.
+#[tauri::command]
+async fn script_open(name: Option<String>, path: Option<PathBuf>, data: Option<String>) -> Res<String> {
+    let bytes = match data {
+        Some(d) => Some(base64::engine::general_purpose::STANDARD.decode(d.as_bytes()).map_err(err)?),
+        None => None,
+    };
+    tauri::async_runtime::spawn_blocking(move || match (path, bytes) {
+        (_, Some(b)) => booth_core::doc::open_bytes(name.as_deref().unwrap_or(""), &b),
+        (Some(p), None) => booth_core::doc::open_path(&p),
+        (None, None) => Err(anyhow::anyhow!("no file given")),
+    })
+    .await
+    .map_err(err)?
+    .map_err(err_chain)
+}
+
 /// Start (or keep going) making a script's lines; progress comes as `script` events.
 fn start_run(app: &AppHandle, id: String) {
     let app = app.clone();
@@ -1034,6 +1052,7 @@ pub fn run() {
             speak,
             render_script,
             script_parse,
+            script_open,
             script_create,
             script_run,
             script_stop,

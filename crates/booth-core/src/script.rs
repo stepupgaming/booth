@@ -4,7 +4,8 @@
 //! People paste scripts from Google Docs, ChatGPT, Notion or a notes app, so the parser takes
 //! what those produce: speaker labels (`NARRATOR:`, `**Host:**`), headings, stage notes
 //! (`[B-roll: ...]`, `(SFX: wind)`), bullets, blank lines between paragraphs, and long
-//! paragraphs that need splitting into lines the engine reads well.
+//! paragraphs that need splitting into lines the engine reads well. Pause tags (`[pause]`,
+//! `[pause 2s]`, `(pause 500ms)`) are never spoken: they add silence at that point.
 
 use std::collections::BTreeMap;
 
@@ -27,7 +28,19 @@ pub struct Line {
     /// The line starts a new paragraph, so it gets a longer pause before it.
     #[serde(default)]
     pub para: bool,
+    /// Extra silence before the line from pause tags, in ms, on top of the usual gap.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pause_ms: u32,
 }
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// A bare `[pause]`, and the shortest and longest pause a tag (or a run of them) adds.
+pub const PAUSE_DEFAULT_MS: u32 = 1000;
+const PAUSE_MIN_MS: u32 = 100;
+pub const PAUSE_MAX_MS: u32 = 10_000;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Parsed {
@@ -49,6 +62,8 @@ const NOTE_LABELS: &[&str] = &[
 /// label even when the script uses that name only once.
 pub fn parse(text: &str, voice_names: &[String]) -> Parsed {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    // Pasted subtitles: their words, without cue numbers and timings.
+    let text = if crate::doc::looks_like_subtitles(&text) { crate::doc::subtitles(&text) } else { text };
 
     // First pass: how often each label candidate appears, so "Note: ..." used once in prose
     // isn't taken for a speaker while "Host:" on every line is.
@@ -72,6 +87,8 @@ pub fn parse(text: &str, voice_names: &[String]) -> Parsed {
     // Units are one speaker's run of text, before splitting into engine-sized lines.
     let mut units: Vec<Line> = Vec::new();
     let mut blank = false;
+    // Silence from pause tags waiting for the next spoken line.
+    let mut pending_pause = 0u32;
     for raw in text.lines() {
         let mut s = clean_markup(raw.trim());
         if s.is_empty() || is_rule(&s) {
@@ -83,7 +100,7 @@ pub fn parse(text: &str, voice_names: &[String]) -> Parsed {
             blank = true;
             continue;
         }
-        if is_whole_note(&s) {
+        if is_whole_note(&s) && split_pauses(&s).len() == 1 {
             out.skipped.push(s);
             continue;
         }
@@ -98,33 +115,59 @@ pub fn parse(text: &str, voice_names: &[String]) -> Parsed {
                 s = rest;
             }
         }
-        let (spoken, notes) = strip_inline_notes(&s);
-        out.skipped.extend(notes);
-        if spoken.is_empty() {
-            continue;
-        }
-        // A sentence broken across lines (text copied from a PDF or an email): join it back,
-        // as long as nothing marks a new speaker or paragraph.
-        if let Some(prev) = units.last_mut() {
-            let continues = !blank
-                && speaker.is_none()
-                && !ends_sentence(&prev.text)
-                && spoken.chars().next().is_some_and(char::is_lowercase);
-            if continues {
-                prev.text.push(' ');
-                prev.text.push_str(&spoken);
+        // A pause tag inside the line splits it there; each piece is a line of its own.
+        let mut line_speaker: Option<Option<String>> = None;
+        for (k, (pause, piece)) in split_pauses(&s).into_iter().enumerate() {
+            pending_pause = (pending_pause + pause).min(PAUSE_MAX_MS);
+            let (spoken, notes) = strip_inline_notes(&piece);
+            out.skipped.extend(notes);
+            if spoken.is_empty() {
                 continue;
             }
+            // "Wait [pause]." leaves a lone full stop: it belongs to the words before the tag.
+            if k > 0 && !spoken.chars().any(char::is_alphanumeric) {
+                if let Some(prev) = units.last_mut() {
+                    prev.text.push_str(&spoken);
+                }
+                continue;
+            }
+            // A sentence broken across lines (text copied from a PDF or an email): join it back,
+            // as long as nothing marks a new speaker, paragraph or pause.
+            if let Some(prev) = units.last_mut().filter(|_| k == 0 && pending_pause == 0) {
+                let continues = !blank
+                    && speaker.is_none()
+                    && !ends_sentence(&prev.text)
+                    && spoken.chars().next().is_some_and(char::is_lowercase);
+                if continues {
+                    prev.text.push(' ');
+                    prev.text.push_str(&spoken);
+                    line_speaker = Some(prev.speaker.clone());
+                    continue;
+                }
+            }
+            // A line without a label in a script that uses labels keeps the last speaker.
+            let who = match &line_speaker {
+                Some(w) => w.clone(),
+                None => speaker.clone().or_else(|| if blank { None } else { units.last().and_then(|u| u.speaker.clone()) }),
+            };
+            line_speaker = Some(who.clone());
+            // A pause before the very first line would only be silence at the start: dropped.
+            let pause_ms = if units.is_empty() { 0 } else { pending_pause };
+            units.push(Line { speaker: who, text: spoken, para: blank && !units.is_empty(), pause_ms });
+            pending_pause = 0;
+            blank = false;
         }
-        // A line without a label in a script that uses labels keeps the last speaker.
-        let speaker = speaker.or_else(|| if blank { None } else { units.last().and_then(|u| u.speaker.clone()) });
-        units.push(Line { speaker, text: spoken, para: blank && !units.is_empty() });
-        blank = false;
     }
 
     for u in units {
         for (i, chunk) in split_long(&u.text, MAX_LINE).into_iter().enumerate() {
-            out.lines.push(Line { speaker: u.speaker.clone(), text: chunk, para: u.para && i == 0 });
+            let first = i == 0;
+            out.lines.push(Line {
+                speaker: u.speaker.clone(),
+                text: chunk,
+                para: u.para && first,
+                pause_ms: if first { u.pause_ms } else { 0 },
+            });
         }
     }
     for l in &out.lines {
@@ -135,6 +178,61 @@ pub fn parse(text: &str, voice_names: &[String]) -> Parsed {
         }
     }
     out
+}
+
+/// The inside of a `[...]` or `(...)` tag as a pause in ms: `pause` (1 s), `pause 2s`,
+/// `pause 1.5`, `pause 500ms`, `pause: 2 seconds`, `pause for effect`. Case doesn't matter.
+fn pause_tag(inner: &str) -> Option<u32> {
+    let low = inner.trim().to_lowercase();
+    let rest = low.strip_prefix("pause")?;
+    let rest = rest.strip_prefix('s').unwrap_or(rest); // "pauses"
+    if rest.starts_with(char::is_alphanumeric) && !rest.starts_with(|c: char| c.is_ascii_digit()) {
+        return None; // "paused", "pauseless"
+    }
+    let rest = rest.trim_start_matches([' ', ':', ',', '-', '=', '\t']);
+    let num_end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len());
+    if num_end == 0 {
+        // "[pause]", or words after it ("pause for effect")
+        return (rest.is_empty() || rest.starts_with(char::is_alphabetic)).then_some(PAUSE_DEFAULT_MS);
+    }
+    let n: f64 = rest[..num_end].parse().ok()?;
+    let ms = match rest[num_end..].trim() {
+        "" | "s" | "sec" | "secs" | "second" | "seconds" => n * 1000.0,
+        "ms" | "msec" | "millisecond" | "milliseconds" => n,
+        _ => return None,
+    };
+    Some((ms.round().min(u32::MAX as f64) as u32).clamp(PAUSE_MIN_MS, PAUSE_MAX_MS))
+}
+
+/// A line split at its pause tags: each piece with the pause before it (the first piece's is 0).
+fn split_pauses(s: &str) -> Vec<(u32, String)> {
+    let mut out = vec![(0, String::new())];
+    let mut rest = s;
+    while let Some(p) = rest.find(['[', '(']) {
+        let close = if rest.as_bytes()[p] == b'[' { ']' } else { ')' };
+        let Some(len) = rest[p + 1..].find(close) else { break };
+        let last = out.len() - 1;
+        match pause_tag(&rest[p + 1..p + 1 + len]) {
+            Some(ms) => {
+                out[last].1.push_str(&rest[..p]);
+                out.push((ms, String::new()));
+                rest = &rest[p + 2 + len..];
+            }
+            None => {
+                out[last].1.push_str(&rest[..=p]);
+                rest = &rest[p + 1..];
+            }
+        }
+    }
+    let last = out.len() - 1;
+    out[last].1.push_str(rest);
+    out
+}
+
+/// What gets said of a line typed by hand (a redo with new words): pause tags and notes out.
+pub fn spoken_only(text: &str) -> String {
+    let words: Vec<String> = split_pauses(text).iter().map(|(_, piece)| strip_inline_notes(piece).0).filter(|w| !w.is_empty()).collect();
+    words.join(" ")
 }
 
 /// Markdown and chat formatting that shouldn't be read out: bold, italics, bullets, quotes.
@@ -328,6 +426,70 @@ pub fn split_long(text: &str, max: usize) -> Vec<String> {
     out
 }
 
+#[cfg(test)]
+mod pause_tests {
+    use super::*;
+
+    fn lines(src: &str) -> Vec<(String, u32)> {
+        parse(src, &[]).lines.into_iter().map(|l| (l.text, l.pause_ms)).collect()
+    }
+
+    #[test]
+    fn pause_tag_lengths() {
+        assert_eq!(pause_tag("pause"), Some(1000));
+        assert_eq!(pause_tag("PAUSE 2s"), Some(2000));
+        assert_eq!(pause_tag("Pause 1.5"), Some(1500));
+        assert_eq!(pause_tag("pause 500ms"), Some(500));
+        assert_eq!(pause_tag("pause: 2 seconds"), Some(2000));
+        assert_eq!(pause_tag("pauses"), Some(1000));
+        assert_eq!(pause_tag("pause for effect"), Some(1000));
+        assert_eq!(pause_tag("pause 30s"), Some(10_000));
+        assert_eq!(pause_tag("pause 0"), Some(100));
+        assert_eq!(pause_tag("paused"), None);
+        assert_eq!(pause_tag("pause 2 beats"), None);
+        assert_eq!(pause_tag("SFX: wind"), None);
+    }
+
+    #[test]
+    fn pauses_between_and_inside_lines() {
+        // between lines: on the next line; a run of tags adds up
+        assert_eq!(
+            lines("NARRATOR: It isn't broken.
+[pause 2s]
+NARRATOR: It's cold.
+(pause)
+[PAUSE 500ms]
+NARRATOR: Warm it."),
+            [("It isn't broken.".into(), 0), ("It's cold.".into(), 2000), ("Warm it.".into(), 1500)]
+        );
+        // inside a line: split there, the speaker kept, the tag never spoken
+        let p = parse("HOST: We waited [pause 1.5] and nothing happened [pause].
+GUEST: Nothing?", &[]);
+        let got: Vec<_> = p.lines.iter().map(|l| (l.speaker.as_deref(), l.text.as_str(), l.pause_ms)).collect();
+        assert_eq!(
+            got,
+            [
+                (Some("HOST"), "We waited", 0),
+                (Some("HOST"), "and nothing happened.", 1500),
+                (Some("GUEST"), "Nothing?", 1000),
+            ]
+        );
+        assert!(p.skipped.is_empty());
+        assert!(p.lines.iter().all(|l| !l.text.to_lowercase().contains("pause")));
+        // a pause keeps a lowercase next line from being joined to the one before
+        assert_eq!(lines("we left
+[pause]
+quietly."), [("we left".into(), 0), ("quietly.".into(), 1000)]);
+        // at the very start there's nothing to pause after; a long run is capped
+        assert_eq!(lines("[pause 3s]
+Hello."), [("Hello.".into(), 0)]);
+        assert_eq!(lines("A.
+[pause 9s] [pause 9s] B."), [("A.".into(), 0), ("B.".into(), PAUSE_MAX_MS)]);
+        // other notes still go
+        assert_eq!(spoken_only("Hi [pause 2s] there (SFX: door)."), "Hi there.");
+    }
+}
+
 /// One caption on screen.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Cue {
@@ -433,9 +595,10 @@ QUOTE: Warm it up, and most of that charge comes back.\n";
     #[test]
     fn markdown_notes_and_broken_lines() {
         let p = parse("**NARRATOR (V.O.):** Then it *stopped*. [cut to black]\n- and then\nwe left (pause) quietly.", &[]);
-        assert_eq!(texts(&p), ["Then it stopped.", "and then we left quietly."]);
+        assert_eq!(texts(&p), ["Then it stopped.", "and then we left", "quietly."]);
         assert_eq!(p.lines[0].speaker.as_deref(), Some("NARRATOR"));
-        assert_eq!(p.skipped, ["[cut to black]", "(pause)"]);
+        assert_eq!(p.lines[2].pause_ms, 1000);
+        assert_eq!(p.skipped, ["[cut to black]"]);
         let p = parse("SFX: whoosh\nMusic: low drone\n0:15\nReal line (and that's fine).", &[]);
         assert_eq!(texts(&p), ["Real line (and that's fine)."]);
     }
