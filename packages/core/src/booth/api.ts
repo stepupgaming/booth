@@ -68,6 +68,10 @@ export interface ScriptExported {
   lines: string[];
   take_id: string | null;
   seconds: number;
+  /** The captions as WebVTT, when asked for. */
+  vtt?: string | null;
+  /** How loud the voiceover came out, when loudness was evened out. */
+  loudness?: { lufs: number; true_peak: number } | null;
 }
 
 /** A script being made line by line (booth-core batch.rs). */
@@ -90,6 +94,14 @@ export interface ScriptExportOptions {
   voiceover: boolean;
   captions: boolean;
   lines: boolean;
+  /** File type for the voiceover and the line files (Library takes stay WAV). */
+  format: "wav" | "mp3";
+  /** Lines at a like level, the voiceover at -14 LUFS with peaks under -1 dBTP. */
+  even_loudness: boolean;
+  /** Sentence captions, or short ones of 2 to 4 words for Shorts, TikTok and Reels. */
+  caption_style: "sentences" | "short";
+  /** Also write the captions as .vtt. */
+  vtt: boolean;
 }
 
 export interface Overview {

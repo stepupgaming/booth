@@ -16,6 +16,7 @@ import type {
 } from "@workspace/core/booth/api";
 
 const SAMPLE = "/sample-rupert.mp3";
+const SPACES = /\s+/;
 
 const voice = (
   id: string,
@@ -736,16 +737,35 @@ export function installMock() {
             const pad = (n: number, w = 2) => String(n).padStart(w, "0");
             return `${pad(Math.floor(ms / 3_600_000))}:${pad(Math.floor(ms / 60_000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
           };
-          return (job?.lines ?? [])
-            .map((l, i) => {
-              t += i
-                ? (l.para ? p.options.para_gap_ms : p.options.gap_ms) / 1000
-                : 0;
-              const cue = `${i + 1}\n${stamp(t)} --> ${stamp(t + l.seconds)}\n${l.text}`;
-              t += l.seconds;
-              return cue;
-            })
-            .join("\n\n");
+          // Short style here is 3 words at a time, timed by characters (the
+          // real split also breaks at punctuation).
+          const pieces = (text: string) => {
+            if (p.options.caption_style !== "short") {
+              return [text];
+            }
+            const words = text.split(SPACES).filter(Boolean);
+            const out: string[] = [];
+            for (let w = 0; w < words.length; w += 3) {
+              out.push(words.slice(w, w + 3).join(" "));
+            }
+            return out;
+          };
+          const cues: string[] = [];
+          for (const [i, l] of (job?.lines ?? []).entries()) {
+            t += i
+              ? (l.para ? p.options.para_gap_ms : p.options.gap_ms) / 1000
+              : 0;
+            const parts = pieces(l.text);
+            const chars = parts.reduce((n, x) => n + x.length, 0) || 1;
+            for (const x of parts) {
+              const d = (l.seconds * x.length) / chars;
+              cues.push(
+                `${cues.length + 1}\n${stamp(t)} --> ${stamp(t + d)}\n${x}`
+              );
+              t += d;
+            }
+          }
+          return cues.join("\n\n");
         }
         case "script_export": {
           const job = jobs.find((j) => j.id === p.id);
@@ -753,19 +773,27 @@ export function installMock() {
             throw "no such script";
           }
           await wait(500);
+          const ext = p.options.format === "mp3" ? "mp3" : "wav";
+          const folder = `C:\\Users\\you\\Booth\\scripts\\${job.id}\\export`;
           job.exported = {
-            folder: `C:\\Users\\you\\Booth\\scripts\\${job.id}\\export`,
+            folder,
             voiceover: p.options.voiceover ? SAMPLE : null,
-            captions: p.options.captions
-              ? `C:\\Users\\you\\Booth\\scripts\\${job.id}\\export\\${job.title}.srt`
-              : null,
+            captions: p.options.captions ? `${folder}\\${job.title}.srt` : null,
+            vtt:
+              p.options.captions && p.options.vtt
+                ? `${folder}\\${job.title}.vtt`
+                : null,
             lines: p.options.lines
               ? job.lines.map(
-                  (_, i) => `lines\\${String(i + 1).padStart(2, "0")}.wav`
+                  (_, i) => `lines\\${String(i + 1).padStart(2, "0")}.${ext}`
                 )
               : [],
             take_id: "take-script",
             seconds: job.lines.reduce((s, l) => s + l.seconds, 0),
+            loudness:
+              p.options.even_loudness && p.options.voiceover
+                ? { lufs: -14.1, true_peak: -1.3 }
+                : null,
           };
           await emit("script", structuredClone(job));
           return job.exported;

@@ -569,6 +569,14 @@ const GAPS = [
   { value: "250", label: "Normal · 0.25 s" },
   { value: "400", label: "Relaxed · 0.4 s" },
 ];
+const FORMATS = [
+  { value: "wav", label: "WAV · best quality" },
+  { value: "mp3", label: "MP3 · smaller file" },
+];
+const CAPTION_STYLES = [
+  { value: "sentences", label: "Sentences" },
+  { value: "short", label: "Short · 2 to 4 words, for Shorts, TikTok, Reels" },
+];
 const PARA_GAPS = [
   { value: "400", label: "0.4 s" },
   { value: "600", label: "0.6 s" },
@@ -752,6 +760,19 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
     true
   );
   const [wantLines, setWantLines] = usePref("booth.script.lines", false);
+  const [format, setFormat] = usePref<"wav" | "mp3">(
+    "booth.script.format",
+    "wav"
+  );
+  const [evenLoudness, setEvenLoudness] = usePref(
+    "booth.script.evenLoudness",
+    false
+  );
+  const [captionStyle, setCaptionStyle] = usePref<"sentences" | "short">(
+    "booth.script.captionStyle",
+    "sentences"
+  );
+  const [wantVtt, setWantVtt] = usePref("booth.script.vtt", false);
   const [srt, setSrt] = useState("");
   const [exporting, setExporting] = useState(false);
 
@@ -767,6 +788,10 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
     voiceover: wantVoiceover,
     captions: wantCaptions,
     lines: wantLines && !phone,
+    format,
+    even_loudness: evenLoudness,
+    caption_style: captionStyle,
+    vtt: wantVtt,
   };
   const hasParas = job.lines.some((l) => l.para);
 
@@ -784,6 +809,7 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
     job.id,
     gap,
     paraGap,
+    captionStyle,
     phone,
     job.lines.map((l) => `${l.version}`).join(),
   ]);
@@ -803,7 +829,7 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
     try {
       const out = await api.scriptExport(job.id, options);
       if (phone) {
-        const files = [out.voiceover, out.captions].filter(
+        const files = [out.voiceover, out.captions, out.vtt].filter(
           (p): p is string => !!p
         );
         await api.shareFiles(files, job.title);
@@ -878,8 +904,30 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
         {phone
           ? null
           : check(wantLines, setWantLines, "Each line as its own file")}
+        {wantCaptions
+          ? check(wantVtt, setWantVtt, "Captions as .vtt too")
+          : null}
+        {check(evenLoudness, setEvenLoudness, "Even out loudness")}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span className="faint small">Save audio as</span>
+        <Dropdown
+          label="Save audio as"
+          onChange={(v) => setFormat(v as "wav" | "mp3")}
+          options={FORMATS}
+          value={format}
+        />
+        {wantCaptions ? (
+          <>
+            <span className="faint small">Caption style</span>
+            <Dropdown
+              label="Caption style"
+              onChange={(v) => setCaptionStyle(v as "sentences" | "short")}
+              options={CAPTION_STYLES}
+              value={captionStyle}
+            />
+          </>
+        ) : null}
         <span className="faint small">Pause between lines</span>
         <Dropdown
           label="Pause between lines"
@@ -940,8 +988,11 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
       {exported && !phone ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div className="muted small" style={{ lineHeight: 1.5 }}>
-            Saved {secs(exported.seconds)} of audio. The voiceover is in your
-            Library too.
+            Saved {secs(exported.seconds)} of audio
+            {exported.loudness
+              ? `, evened out to ${exported.loudness.lufs.toFixed(1)} LUFS`
+              : ""}
+            . The voiceover is in your Library too.
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {exported.voiceover ? (

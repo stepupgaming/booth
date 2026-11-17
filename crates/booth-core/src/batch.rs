@@ -1,5 +1,6 @@
 //! A script being made: every line spoken in order and kept under `scripts\<id>\`, then exported
-//! as one voiceover, captions (.srt) and, if wanted, each line as its own file.
+//! as one voiceover (WAV or MP3), captions (.srt, and .vtt if wanted) and, if wanted, each line
+//! as its own file.
 //!
 //! The loop runs here rather than in the page, so it keeps going when the window is hidden or a
 //! phone's screen is off, and booth-mcp makes scripts the same way the app does.
@@ -13,6 +14,8 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::api::Zonos;
+use crate::audio::{self, Format, Joiner, Loudness};
+use crate::captions::{self, Style};
 use crate::engine;
 use crate::paths;
 use crate::script::{self, Parsed};
@@ -106,9 +109,21 @@ pub struct ExportOptions {
     pub voiceover: bool,
     #[serde(default = "yes")]
     pub captions: bool,
-    /// Each line as its own WAV too.
+    /// Each line as its own file too.
     #[serde(default)]
     pub lines: bool,
+    /// WAV or MP3, for the voiceover and the line files.
+    #[serde(default)]
+    pub format: Format,
+    /// Every line to the same loudness, the whole at -14 LUFS with true peaks under -1 dBTP.
+    #[serde(default)]
+    pub even_loudness: bool,
+    /// Sentence captions, or short ones (2 to 4 words) for Shorts, TikTok and Reels.
+    #[serde(default)]
+    pub caption_style: Style,
+    /// WebVTT (.vtt) captions next to the .srt.
+    #[serde(default)]
+    pub vtt: bool,
 }
 
 fn default_gap() -> u32 {
@@ -123,7 +138,17 @@ fn yes() -> bool {
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        Self { gap_ms: default_gap(), para_gap_ms: default_para_gap(), voiceover: true, captions: true, lines: false }
+        Self {
+            gap_ms: default_gap(),
+            para_gap_ms: default_para_gap(),
+            voiceover: true,
+            captions: true,
+            lines: false,
+            format: Format::Wav,
+            even_loudness: false,
+            caption_style: Style::Sentences,
+            vtt: false,
+        }
     }
 }
 
@@ -134,6 +159,9 @@ pub struct Exported {
     pub voiceover: Option<PathBuf>,
     #[serde(default)]
     pub captions: Option<PathBuf>,
+    /// The captions as WebVTT, when asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vtt: Option<PathBuf>,
     #[serde(default)]
     pub lines: Vec<PathBuf>,
     /// The voiceover's take in the Library.
@@ -141,6 +169,9 @@ pub struct Exported {
     pub take_id: Option<String>,
     #[serde(default)]
     pub seconds: f64,
+    /// Measured loudness of the voiceover, when it was evened out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loudness: Option<Loudness>,
 }
 
 pub fn scripts_dir() -> PathBuf {
@@ -487,7 +518,7 @@ pub fn captions_preview(job: &Job, o: &ExportOptions) -> String {
         spans.push((l.text.clone(), t, l.seconds));
         t += l.seconds;
     }
-    script::to_srt(&script::cues(&spans))
+    captions::to_srt(&captions::cues(&spans, o.caption_style))
 }
 
 fn file_stem(job: &Job) -> String {
@@ -505,26 +536,64 @@ fn file_stem(job: &Job) -> String {
 
 /// Write the voiceover, captions and line files into the script's `export` folder, and add the
 /// voiceover to the Library. Every line must be made.
+///
+/// The lines are read one at a time and the voiceover is written as it goes, so memory stays
+/// the same however long the script is. Evening out loudness reads the lines twice more first.
 pub fn export(id: &str, o: &ExportOptions) -> Result<Exported> {
     let job = get(id)?;
     if let Some((n, _)) = job.lines.iter().enumerate().find(|(_, l)| l.state != LineState::Done) {
         bail!("line {} isn't made yet", n + 1);
     }
-    let mut wavs = Vec::new();
-    for l in &job.lines {
-        let p = l.path.as_ref().context("a line has no audio")?;
-        wavs.push(std::fs::read(p).with_context(|| format!("reading {}", p.display()))?);
-    }
-    let (wav, spans) = takes::concat_timed(&wavs, &gaps(&job, o))?;
+    let sources: Vec<PathBuf> =
+        job.lines.iter().map(|l| l.path.clone().context("a line has no audio")).collect::<Result<_>>()?;
+    let gaps = gaps(&job, o);
+    let gains = if o.even_loudness { audio::plan_gains(&sources, &gaps)? } else { vec![0.0; sources.len()] };
     let folder = job.folder().join("export");
     let _ = std::fs::remove_dir_all(&folder);
     paths::ensure_dir(&folder)?;
     let stem = file_stem(&job);
-    let mut out = Exported { folder: folder.clone(), seconds: takes::wav_seconds(&wav), ..Default::default() };
+    let mut out = Exported { folder: folder.clone(), ..Default::default() };
+
+    // The voiceover, plus a WAV for the Library when the voiceover is an MP3.
+    let mut outs = Vec::new();
+    let mut library = None;
     if o.voiceover {
-        let p = folder.join(format!("{stem}.wav"));
-        std::fs::write(&p, &wav)?;
-        out.voiceover = Some(p);
+        let p = folder.join(format!("{stem}.{}", o.format.ext()));
+        outs.push((p.clone(), o.format));
+        out.voiceover = Some(p.clone());
+        library = Some(if o.format == Format::Wav {
+            p
+        } else {
+            let wav = folder.join(".library.wav");
+            outs.push((wav.clone(), Format::Wav));
+            wav
+        });
+    }
+    let line_dir = folder.join("lines");
+    if o.lines {
+        paths::ensure_dir(&line_dir)?;
+    }
+    let mut join = Joiner::new(outs, o.even_loudness && o.voiceover);
+    let mut spans = Vec::with_capacity(job.lines.len());
+    for (i, (l, src)) in job.lines.iter().zip(&sources).enumerate() {
+        let pcm = audio::read_wav(src)?;
+        if i > 0 {
+            join.pause(gaps[i])?;
+        }
+        spans.push((l.text.clone(), join.seconds(), pcm.seconds()));
+        join.line(&pcm, gains[i]).with_context(|| format!("line {}", i + 1))?;
+        if o.lines {
+            let who = l.speaker.as_deref().map(|s| format!(" {}", file_safe(s))).unwrap_or_default();
+            let p = line_dir.join(format!("{:02}{who}.{}", i + 1, o.format.ext()));
+            audio::write_line(src, &p, o.format, o.even_loudness.then_some(gains[i]))?;
+            out.lines.push(p);
+        }
+    }
+    let (seconds, loudness) = join.finish()?;
+    out.seconds = seconds;
+    out.loudness = loudness;
+
+    if let Some(wav) = library {
         let names = job.lines.iter().fold(Vec::<String>::new(), |mut acc, l| {
             if !acc.contains(&l.voice_name) {
                 acc.push(l.voice_name.clone());
@@ -551,23 +620,21 @@ pub fn export(id: &str, o: &ExportOptions) -> Result<Exported> {
             starred: true,
             path: Default::default(),
         };
-        out.take_id = takes::save(take, &wav).ok().map(|t| t.id);
+        // The WAV voiceover stays in the export folder; the MP3's helper WAV moves to the Library.
+        out.take_id = takes::save_file(take, &wav, o.format == Format::Wav).ok().map(|t| t.id);
+        if o.format != Format::Wav {
+            let _ = std::fs::remove_file(&wav);
+        }
     }
     if o.captions {
-        let lines: Vec<(String, f64, f64)> =
-            job.lines.iter().zip(&spans).map(|(l, (start, secs))| (l.text.clone(), *start, *secs)).collect();
+        let cues = captions::cues(&spans, o.caption_style);
         let p = folder.join(format!("{stem}.srt"));
-        std::fs::write(&p, script::to_srt(&script::cues(&lines)))?;
+        std::fs::write(&p, captions::to_srt(&cues))?;
         out.captions = Some(p);
-    }
-    if o.lines {
-        let dir = folder.join("lines");
-        paths::ensure_dir(&dir)?;
-        for (i, (l, w)) in job.lines.iter().zip(&wavs).enumerate() {
-            let who = l.speaker.as_deref().map(|s| format!(" {}", file_safe(s))).unwrap_or_default();
-            let p = dir.join(format!("{:02}{who}.wav", i + 1));
-            std::fs::write(&p, w)?;
-            out.lines.push(p);
+        if o.vtt {
+            let p = folder.join(format!("{stem}.vtt"));
+            std::fs::write(&p, captions::to_vtt(&cues))?;
+            out.vtt = Some(p);
         }
     }
     let saved = out.clone();
@@ -657,10 +724,140 @@ mod tests {
         assert!(out.lines[1].ends_with("02 QUOTE.wav"));
         let take = takes::find(&out.take_id.unwrap()).unwrap();
         assert_eq!(take.voice_name, "Cillian + Imogen");
+        // the same as MP3, evened out, with short captions as .srt and .vtt
+        let mp3 = ExportOptions { format: Format::Mp3, even_loudness: true, caption_style: Style::Short, vtt: true, ..opts.clone() };
+        let out = export(&id, &mp3).unwrap();
+        assert_eq!(out.voiceover.as_ref().unwrap().file_name().unwrap(), "Cold phones.mp3");
+        assert!(out.lines.iter().all(|p| p.extension().unwrap() == "mp3") && out.lines.len() == 2);
+        assert!(!out.folder.join(".library.wav").exists());
+        let take = takes::find(&out.take_id.unwrap()).unwrap();
+        assert!((take.seconds - 3.6).abs() < 0.01 && take.path.extension().unwrap() == "wav");
+        let loud = out.loudness.unwrap();
+        assert!((loud.lufs - audio::TARGET_LUFS).abs() < 1.0 && loud.true_peak <= audio::CEILING_DBTP + 0.05, "{loud:?}");
+        let vtt = std::fs::read_to_string(out.vtt.unwrap()).unwrap();
+        assert!(vtt.starts_with("WEBVTT
+
+00:00:00.000 --> "), "{vtt}");
+        let srt = std::fs::read_to_string(out.captions.unwrap()).unwrap();
+        assert!(srt.contains("
+It isn't broken.
+") && srt.contains("
+Warm it up,
+"), "{srt}");
+        assert_eq!(srt, captions_preview(&job, &mp3));
         // a redo clears the export and waits for the next run
         let j = redo(&id, 1, Some("Warm it up.".into())).unwrap();
         assert_eq!(j.lines[1].state, LineState::Waiting);
         assert!(j.exported.is_none() && export(&id, &opts).is_err());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A/B files for "Even out loudness" from real line recordings. `BOOTH_AB_LINES` names a text
+    /// file with one WAV path per line (read only, copied first); the voiceover with the option
+    /// off and on goes to `BOOTH_AB_OUT`, and the measurements are printed.
+    /// `cargo test -p booth-core --release ab_even_loudness -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn ab_even_loudness() {
+        use ebur128::{EbuR128, Mode};
+        let list = std::fs::read_to_string(std::env::var("BOOTH_AB_LINES").unwrap()).unwrap();
+        let out_dir = PathBuf::from(std::env::var("BOOTH_AB_OUT").unwrap());
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let home = std::env::temp_dir().join(format!("booth-ab-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::env::set_var("BOOTH_HOME", &home);
+        std::env::set_var("BOOTH_TAKES_DIR", home.join("takes"));
+        let id = "ab".to_string();
+        let folder = scripts_dir().join(&id);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut lines = Vec::new();
+        for (i, src) in list.lines().map(str::trim).filter(|l| !l.is_empty()).enumerate() {
+            let src = PathBuf::from(src);
+            let path = folder.join(format!("line-{:03}-v1.wav", i + 1));
+            std::fs::copy(&src, &path).unwrap();
+            let meta: serde_json::Value = std::fs::read(src.with_extension("json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+            lines.push(JobLine {
+                speaker: meta["voice_name"].as_str().map(String::from),
+                voice: "v".into(),
+                voice_name: meta["voice_name"].as_str().unwrap_or("").into(),
+                text: meta["text"].as_str().unwrap_or("line").into(),
+                para: false,
+                state: LineState::Done,
+                seconds: audio::read_wav(&path).unwrap().seconds(),
+                seed: None,
+                version: 1,
+                voice_match: None,
+                drifted: false,
+                error: None,
+                path: Some(path),
+            });
+        }
+        let job = Job {
+            id: id.clone(),
+            title: "Booth AB".into(),
+            created_at: chrono::Utc::now(),
+            lines,
+            skipped: Vec::new(),
+            source: String::new(),
+            voices: BTreeMap::new(),
+            via: "app".into(),
+            running: false,
+            exported: None,
+        };
+        write(&job).unwrap();
+        let measure = |p: &std::path::Path| {
+            let pcm = audio::read_wav(p).unwrap();
+            let mut m = EbuR128::new(1, pcm.rate, Mode::I | Mode::TRUE_PEAK).unwrap();
+            m.add_frames_i16(&pcm.samples).unwrap();
+            let whole = (m.loudness_global().unwrap(), 20.0 * m.true_peak(0).unwrap().log10());
+            // each line where it sits in the voiceover (the same pauses as the export)
+            let g = gaps(&job, &ExportOptions::default());
+            let mut at = 0usize;
+            let mut per = Vec::new();
+            for (i, l) in job.lines.iter().enumerate() {
+                if i > 0 {
+                    at += (pcm.rate as usize * g[i] as usize) / 1000;
+                }
+                let n = (l.seconds * pcm.rate as f64).round() as usize;
+                let mut lm = EbuR128::new(1, pcm.rate, Mode::I).unwrap();
+                lm.add_frames_i16(&pcm.samples[at..at + n]).unwrap();
+                per.push(lm.loudness_global().unwrap());
+                at += n;
+            }
+            (whole, per)
+        };
+        let sources: Vec<PathBuf> = job.lines.iter().map(|l| l.path.clone().unwrap()).collect();
+        let solo: Vec<String> = sources
+            .iter()
+            .map(|p| {
+                let pcm = audio::read_wav(p).unwrap();
+                let mut m = EbuR128::new(1, pcm.rate, Mode::I).unwrap();
+                m.add_frames_i16(&pcm.samples).unwrap();
+                format!("{:.1} ({:.1} s)", m.loudness_global().unwrap(), pcm.seconds())
+            })
+            .collect();
+        eprintln!("lines on their own: {solo:?}");
+        eprintln!("gains: {:.1?}", audio::plan_gains(&sources, &gaps(&job, &ExportOptions::default())).unwrap());
+        for (name, even, format) in [("off", false, Format::Wav), ("off", false, Format::Mp3), ("on", true, Format::Wav), ("on", true, Format::Mp3)] {
+            let o = ExportOptions { even_loudness: even, format, ..Default::default() };
+            let out = export(&id, &o).unwrap();
+            let src = out.voiceover.unwrap();
+            let dst = out_dir.join(format!("even-loudness-{name}.{}", format.ext()));
+            std::fs::copy(&src, &dst).unwrap();
+            if format == Format::Wav {
+                let ((lufs, tp), per) = measure(&dst);
+                let ok: Vec<f64> = per.iter().copied().filter(|l| l.is_finite()).collect();
+                let spread = ok.iter().copied().fold(f64::MIN, f64::max) - ok.iter().copied().fold(f64::MAX, f64::min);
+                let mean = ok.iter().sum::<f64>() / ok.len() as f64;
+                let sd = (ok.iter().map(|l| (l - mean).powi(2)).sum::<f64>() / ok.len() as f64).sqrt();
+                eprintln!("{name}: {lufs:.1} LUFS, {tp:.2} dBTP, lines spread {spread:.1} dB (sd {sd:.1}), per line {per:.1?}");
+            } else {
+                eprintln!("{name} mp3: {:?}", out.loudness);
+            }
+        }
         let _ = std::fs::remove_dir_all(&home);
     }
 }

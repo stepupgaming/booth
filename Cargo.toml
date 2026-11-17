@@ -20,3 +20,11 @@ booth-core = { path = "crates/booth-core" }
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# The MP3 encoder and loudness meter are slow unoptimized; a dev build (and cargo test) exporting
+# a long script would crawl.
+[profile.dev.package.rusty_mp3]
+opt-level = 3
+
+[profile.dev.package.ebur128]
+opt-level = 3
