@@ -175,6 +175,7 @@ async fn pack_info() -> Res<Vec<PackInfo>> {
                 Pack::Exact => 5_600_000_000,
                 Pack::FullDecoder => 2_200_000_000,
                 Pack::GpuEngine => models::CUDA_ENGINE_SIZE,
+                Pack::VulkanEngine => models::VULKAN_ENGINE_SIZE,
             },
         };
         out.push(PackInfo {
@@ -805,6 +806,18 @@ async fn reveal(app: AppHandle, path: PathBuf) -> Res<()> {
     }
 }
 
+/// Opens one of Booth's own web pages (nofacetube.com, the GitHub repo) in the browser.
+#[tauri::command]
+async fn open_link(app: AppHandle, url: String) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let lower = url.to_ascii_lowercase();
+    let ok = ["https://nofacetube.com/", "https://github.com/stepupgaming/"].iter().any(|p| lower.starts_with(p));
+    if !ok {
+        return Err(format!("{url} is not a Booth page"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(err)
+}
+
 /// Booth's log and the engine's, newest last, for the Settings page and bug reports.
 #[tauri::command]
 async fn read_log() -> Res<String> {
@@ -1013,6 +1026,13 @@ pub fn run() {
             } else {
                 tauri::async_runtime::spawn(models::remove_older_cuda_engines());
             }
+            // Same for the Vulkan engine (beta), when the person uses it.
+            if models::vulkan_engine_outdated() && !DOWNLOADING.swap(true, Ordering::SeqCst) {
+                tauri::async_runtime::spawn(async {
+                    let _ = models::upgrade_vulkan_engine(&booth_core::http_client()).await;
+                    DOWNLOADING.store(false, Ordering::SeqCst);
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1050,6 +1070,7 @@ pub fn run() {
             save_settings,
             claude_info,
             reveal,
+            open_link,
             install_mcpb,
             check_update,
             install_update,

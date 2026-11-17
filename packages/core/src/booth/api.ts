@@ -3,10 +3,10 @@ import { getVersion } from "@tauri-apps/api/app";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Pack = "core" | "gpu_engine" | "exact" | "full_decoder";
-/** What the engine computes on: an NVIDIA card, Apple's Metal, or the processor. */
-export type Accel = "cuda" | "metal" | "cpu";
-export type Device = "auto" | "cpu";
+export type Pack = "core" | "gpu_engine" | "vulkan_engine" | "exact" | "full_decoder";
+/** What the engine computes on: an NVIDIA card, Apple's Metal, an AMD or Intel card (Vulkan, beta), or the processor. */
+export type Accel = "cuda" | "metal" | "vulkan" | "cpu";
+export type Device = "auto" | "cpu" | "vulkan";
 export type Mode = "exact" | "shapeable";
 export type SpeakerMode = "reference" | "embedding";
 
@@ -312,6 +312,8 @@ export const api = {
   claudeInfo: () => invoke<ClaudeInfo>("claude_info"),
   /** Show a take or Booth folder in the file manager. */
   reveal: (path: string) => invoke<void>("reveal", { path }),
+  /** Open a nofacetube.com or Booth GitHub page in the browser. */
+  openUrl: (url: string) => invoke<void>("open_link", { url }),
   /** Open booth.mcpb in Claude Desktop (it asks the user to confirm). */
   installMcpb: () => invoke<void>("install_mcpb"),
   onDownload: (cb: (e: DownloadEvent) => void): Promise<UnlistenFn> =>

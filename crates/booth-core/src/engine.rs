@@ -28,6 +28,8 @@ use crate::settings::{self, Device};
 pub enum Accel {
     Cuda,
     Metal,
+    /// The Vulkan engine (beta): AMD and Intel graphics cards.
+    Vulkan,
     Cpu,
 }
 
@@ -50,6 +52,12 @@ pub fn choices(device: Device) -> Vec<EngineChoice> {
     if device == Device::Auto {
         if let Some(dir) = models::installed_cuda_engine() {
             out.push(EngineChoice { dir, accel: Accel::Cuda });
+        }
+    }
+    // Beta: only when chosen in Settings. If it won't start, the bundled CPU engine below runs.
+    if device == Device::Vulkan {
+        if let Some(dir) = models::installed_vulkan_engine() {
+            out.push(EngineChoice { dir, accel: Accel::Vulkan });
         }
     }
     if let Some(dir) = paths::bundled_engine_dir() {

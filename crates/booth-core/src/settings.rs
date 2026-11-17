@@ -31,6 +31,8 @@ pub enum Device {
     Auto,
     /// Always the processor.
     Cpu,
+    /// The Vulkan engine (beta) on an AMD or Intel graphics card, when it's downloaded; else the processor.
+    Vulkan,
 }
 
 impl Default for Settings {

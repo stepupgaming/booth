@@ -776,6 +776,7 @@ export function installMock() {
         case "engine_stop":
           return true;
         case "reveal":
+        case "open_link":
         case "install_mcpb":
           return null;
         default:

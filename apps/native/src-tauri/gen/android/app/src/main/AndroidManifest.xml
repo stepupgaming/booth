@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- RenderService: keeps the processor awake while a script renders with the screen off. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Create a voice > Record now. The WebView asks for these when the page wants the mic;
+         without them listed here Android never shows the prompt and Booth has no Microphone switch. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

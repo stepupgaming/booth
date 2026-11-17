@@ -16,6 +16,12 @@ const PACK_TEXT: Record<Pack, { name: string; desc: string; files: string }> = {
     desc: "Runs Booth on your NVIDIA card, several times faster than the processor. Without it Booth uses the processor.",
     files: "zonos3-server · CUDA 12.8 · from Booth’s GitHub releases",
   },
+  // Offered under Settings > Run on, not in setup.
+  vulkan_engine: {
+    name: "AMD and Intel graphics engine (beta)",
+    desc: "Runs Booth on an AMD or Intel graphics card.",
+    files: "zonos3-server · Vulkan · from Booth’s GitHub releases",
+  },
   full_decoder: {
     name: "Studio-quality decoder",
     desc: "The full audio decoder. Cleaner, fuller sound. Just as fast on a graphics card; about 3× slower on the processor.",
@@ -115,7 +121,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const refresh = useBooth((s) => s.refresh);
   const [step, setStep] = useState(0);
   const [packs, setPacks] = useState<PackInfo[]>([]);
-  const [want, setWant] = useState<Record<Pack, boolean>>({ core: true, gpu_engine: false, full_decoder: false, exact: false });
+  const [want, setWant] = useState<Record<Pack, boolean>>({ core: true, gpu_engine: false, full_decoder: false, exact: false, vulkan_engine: false });
   const [ev, setEv] = useState<DownloadEvent | null>(null);
   const [queue, setQueue] = useState<Pack[]>([]);
   const [finished, setFinished] = useState(false);

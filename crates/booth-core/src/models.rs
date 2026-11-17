@@ -77,6 +77,9 @@ pub enum Pack {
     FullDecoder,
     /// The NVIDIA (CUDA) build of the engine, a Windows download. Without it Booth runs on the processor.
     GpuEngine,
+    /// The Vulkan build of the engine (beta), for AMD and Intel graphics cards: a Windows and Linux
+    /// download, offered under Settings > Run on rather than in setup.
+    VulkanEngine,
 }
 
 /// The CUDA engine: `booth-engine.zip` on a prerelease of the Booth repo, built by the release
@@ -133,7 +136,7 @@ pub fn cuda_engine_outdated() -> bool {
 /// Download the current NVIDIA engine, then delete older downloads. The old engine keeps running
 /// until then; the next engine start uses the new one.
 pub async fn upgrade_cuda_engine(client: &reqwest::Client) -> Result<()> {
-    download_cuda_engine(client, |_| {}).await?;
+    download_engine_zip(client, Pack::GpuEngine, |_| {}).await?;
     remove_older_cuda_engines().await;
     Ok(())
 }
@@ -159,12 +162,82 @@ pub async fn remove_older_cuda_engines() {
     }
 }
 
+/// The Vulkan engine (beta): runs Booth on AMD and Intel graphics cards (and NVIDIA ones, though
+/// those get the CUDA engine). A download on Windows and Linux, never bundled, so the app stays
+/// the same size. It's the portable CPU build plus ggml's Vulkan backend, so it starts even where
+/// Vulkan doesn't, and `engine::choices` falls back to the bundled CPU engine if it won't start.
+/// Built by the release workflow and pinned by size and SHA-256. An empty checksum means this
+/// build of Booth has no Vulkan engine to offer yet.
+pub const VULKAN_ENGINE_ID: &str = "vulkan-96d9e0e";
+#[cfg(windows)]
+const VULKAN_ENGINE_URL: &str =
+    "https://github.com/stepupgaming/booth/releases/download/engine-96d9e0e-vulkan/booth-engine-vulkan-windows.zip";
+#[cfg(windows)]
+pub const VULKAN_ENGINE_SIZE: u64 = 0;
+#[cfg(windows)]
+const VULKAN_ENGINE_SHA256: &str = "";
+#[cfg(not(windows))]
+const VULKAN_ENGINE_URL: &str =
+    "https://github.com/stepupgaming/booth/releases/download/engine-96d9e0e-vulkan/booth-engine-vulkan-linux.zip";
+#[cfg(not(windows))]
+pub const VULKAN_ENGINE_SIZE: u64 = 0;
+#[cfg(not(windows))]
+const VULKAN_ENGINE_SHA256: &str = "";
+
+/// Where the Vulkan engine lives once downloaded.
+pub fn vulkan_engine_dir() -> PathBuf {
+    crate::paths::engines_dir().join(VULKAN_ENGINE_ID)
+}
+
+/// Vulkan engine folders other than the current one (from an earlier Booth), newest first.
+fn older_vulkan_engines() -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(crate::paths::engines_dir()) else { return Vec::new() };
+    let mut dirs: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| {
+            let name = d.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            name.starts_with("vulkan-") && !name.ends_with(".unpacking") && name != VULKAN_ENGINE_ID
+        })
+        .collect();
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.metadata().and_then(|m| m.modified()).ok()));
+    dirs
+}
+
+/// The Vulkan engine to use, if one is downloaded: the current one, else an older one until the
+/// current one has downloaded (`upgrade_vulkan_engine`). Windows and Linux only.
+pub fn installed_vulkan_engine() -> Option<PathBuf> {
+    if !(cfg!(windows) || cfg!(target_os = "linux")) {
+        return None;
+    }
+    let exe = crate::paths::SERVER_EXE;
+    std::iter::once(vulkan_engine_dir()).chain(older_vulkan_engines()).find(|d| d.join(exe).is_file())
+}
+
+/// True when the downloaded Vulkan engine is from an earlier Booth and this one has a newer build.
+pub fn vulkan_engine_outdated() -> bool {
+    !VULKAN_ENGINE_SHA256.is_empty() && installed_vulkan_engine().is_some_and(|d| d != vulkan_engine_dir())
+}
+
+/// Download the current Vulkan engine, then delete older ones.
+pub async fn upgrade_vulkan_engine(client: &reqwest::Client) -> Result<()> {
+    download_engine_zip(client, Pack::VulkanEngine, |_| {}).await?;
+    if vulkan_engine_dir().join(crate::paths::SERVER_EXE).is_file() {
+        for d in older_vulkan_engines() {
+            let _ = tokio::fs::remove_dir_all(&d).await;
+        }
+    }
+    Ok(())
+}
+
 impl Pack {
     /// The packs offered on this platform. The NVIDIA engine is a Windows download; macOS uses the
     /// bundled Metal engine and Linux the bundled CPU engine.
     #[cfg(windows)]
-    pub const ALL: &'static [Pack] = &[Pack::Core, Pack::GpuEngine, Pack::Exact, Pack::FullDecoder];
-    #[cfg(not(any(windows, target_os = "android")))]
+    pub const ALL: &'static [Pack] = &[Pack::Core, Pack::GpuEngine, Pack::VulkanEngine, Pack::Exact, Pack::FullDecoder];
+    #[cfg(target_os = "linux")]
+    pub const ALL: &'static [Pack] = &[Pack::Core, Pack::VulkanEngine, Pack::Exact, Pack::FullDecoder];
+    #[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
     pub const ALL: &'static [Pack] = &[Pack::Core, Pack::Exact, Pack::FullDecoder];
     /// Phones get the Core pack only: High-fidelity's encoders (5.6 GB) and the Studio decoder
     /// don't fit a phone's memory next to the model.
@@ -184,6 +257,7 @@ impl Pack {
             Pack::Exact => &["zac-encoder.gguf", "ssl-teacher.gguf"],
             Pack::FullDecoder => &["zac.gguf"],
             Pack::GpuEngine => &["zonos3-server (CUDA)"],
+            Pack::VulkanEngine => &["zonos3-server (Vulkan)"],
         }
     }
 
@@ -193,6 +267,7 @@ impl Pack {
             Pack::Exact => "Exact cloning",
             Pack::FullDecoder => "Studio decoder",
             Pack::GpuEngine => "NVIDIA graphics engine",
+            Pack::VulkanEngine => "AMD and Intel graphics engine (beta)",
         }
     }
 }
@@ -209,6 +284,9 @@ pub fn backbone_path(models: &Path) -> Option<PathBuf> {
 pub fn pack_present(models: &Path, pack: Pack) -> bool {
     if pack == Pack::GpuEngine {
         return installed_cuda_engine().is_some();
+    }
+    if pack == Pack::VulkanEngine {
+        return installed_vulkan_engine().is_some();
     }
     pack.files().iter().all(|f| {
         if let Some(dir) = f.strip_suffix('/') {
@@ -280,12 +358,26 @@ pub async fn plan(_client: &reqwest::Client, pack: Pack) -> Result<Vec<RemoteFil
             }],
         }]);
     }
+    if pack == Pack::VulkanEngine {
+        if VULKAN_ENGINE_SHA256.is_empty() {
+            bail!("this version of Booth has no AMD and Intel graphics engine yet");
+        }
+        return Ok(vec![RemoteFile {
+            rel: "booth-engine-vulkan.zip".into(),
+            size: VULKAN_ENGINE_SIZE,
+            sha256: Some(VULKAN_ENGINE_SHA256.into()),
+            sources: vec![Source {
+                name: "GitHub".into(),
+                parts: vec![SourcePart { url: VULKAN_ENGINE_URL.into(), size: VULKAN_ENGINE_SIZE }],
+            }],
+        }]);
+    }
     let lock = lock();
     let key = match pack {
         Pack::Core => "core",
         Pack::Exact => "exact",
         Pack::FullDecoder => "full_decoder",
-        Pack::GpuEngine => unreachable!(),
+        Pack::GpuEngine | Pack::VulkanEngine => unreachable!(),
     };
     let files = lock.packs.get(key).with_context(|| format!("models.lock.json has no {key} pack"))?;
     let only = std::env::var("BOOTH_MODEL_SOURCE").unwrap_or_default().to_ascii_lowercase();
@@ -366,8 +458,8 @@ pub async fn download(
     pack: Pack,
     mut on_progress: impl FnMut(Progress),
 ) -> Result<()> {
-    if pack == Pack::GpuEngine {
-        return download_cuda_engine(client, on_progress).await;
+    if pack == Pack::GpuEngine || pack == Pack::VulkanEngine {
+        return download_engine_zip(client, pack, on_progress).await;
     }
     let files = plan(client, pack).await?;
     let total: u64 = files.iter().map(|f| f.size).sum();
@@ -504,9 +596,14 @@ async fn fetch_from(
     result
 }
 
-/// Download the CUDA engine zip (resumable, checksummed) and unpack it into `cuda_engine_dir()`.
-async fn download_cuda_engine(client: &reqwest::Client, mut on_progress: impl FnMut(Progress)) -> Result<()> {
-    let pack = Pack::GpuEngine;
+/// Download an engine zip (the NVIDIA or the Vulkan engine; resumable, checksummed) and unpack it
+/// into its folder under `engines/`.
+async fn download_engine_zip(client: &reqwest::Client, pack: Pack, mut on_progress: impl FnMut(Progress)) -> Result<()> {
+    let (id, dest, what) = match pack {
+        Pack::GpuEngine => (CUDA_ENGINE_ID, cuda_engine_dir(), "the NVIDIA engine"),
+        Pack::VulkanEngine => (VULKAN_ENGINE_ID, vulkan_engine_dir(), "the AMD and Intel graphics engine"),
+        _ => bail!("{} is not an engine", pack.label()),
+    };
     let f = plan(client, pack).await?.remove(0);
     let engines = crate::paths::engines_dir();
     tokio::fs::create_dir_all(&engines).await?;
@@ -517,13 +614,12 @@ async fn download_cuda_engine(client: &reqwest::Client, mut on_progress: impl Fn
             on_progress(Progress { pack, file: f.rel.clone(), done_bytes: n, total_bytes: f.size })
         })
         .await
-        .context("downloading the NVIDIA engine")?;
+        .with_context(|| format!("downloading {what}"))?;
     }
     on_progress(Progress { pack, file: f.rel.clone(), done_bytes: f.size, total_bytes: f.size });
-    let dest = cuda_engine_dir();
-    let tmp = engines.join(format!("{CUDA_ENGINE_ID}.unpacking"));
+    let tmp = engines.join(format!("{id}.unpacking"));
     let (zip2, tmp2) = (zip.clone(), tmp.clone());
-    tokio::task::spawn_blocking(move || unzip(&zip2, &tmp2)).await?.context("unpacking the NVIDIA engine")?;
+    tokio::task::spawn_blocking(move || unzip(&zip2, &tmp2)).await?.with_context(|| format!("unpacking {what}"))?;
     if dest.exists() {
         tokio::fs::remove_dir_all(&dest).await.ok();
     }
@@ -562,6 +658,12 @@ fn unzip(zip: &Path, dest: &Path) -> Result<()> {
         }
         let mut file = std::fs::File::create(&out)?;
         std::io::copy(&mut entry, &mut file)?;
+        // Linux engines are zips too: keep the server's execute bit.
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode & 0o777))?;
+        }
     }
     Ok(())
 }

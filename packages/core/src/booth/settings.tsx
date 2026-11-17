@@ -154,7 +154,10 @@ function Models() {
   const state = engine?.state;
   const where = accelWhere(engine?.state === "running" ? engine.accel : undefined);
   // The NVIDIA engine row only where it can help.
-  const shown = (packs ?? []).filter((p) => p.pack !== "gpu_engine" || p.present || system?.gpu_kind === "nvidia");
+  // The Vulkan engine is downloaded from Run on above.
+  const shown = (packs ?? []).filter(
+    (p) => p.pack !== "vulkan_engine" && (p.pack !== "gpu_engine" || p.present || system?.gpu_kind === "nvidia")
+  );
 
   useEffect(() => {
     api.packInfo().then(setPacks).catch(() => setPacks([]));
@@ -246,42 +249,93 @@ function Models() {
   );
 }
 
-/** Graphics card (when Booth has one to use) or the processor. Applies on the engine's next start. */
+/** Where the AMD and Intel beta asks people to say how it went. */
+const GPU_BETA_URL = "https://nofacetube.com/tools/booth/gpu-beta/";
+
+/**
+ * Graphics card or processor. NVIDIA (Windows) and Apple Silicon use their own engines; on Windows
+ * and Linux without an NVIDIA card there's the Vulkan engine for AMD and Intel cards (beta), a
+ * download. Applies on the engine's next start.
+ */
 function RunOn({ settings, save }: { settings: S | undefined; save: (p: Partial<S>) => Promise<void> }) {
   const toast = useToast();
   const system = useBooth((s) => s.system);
   const overview = useBooth((s) => s.overview);
   const refresh = useBooth((s) => s.refresh);
-  const gpu = system?.gpu_kind === "apple" || (system?.gpu_kind === "nvidia" && system.platform === "windows");
-  if (!gpu) {
+  const [dl, setDl] = useState<DownloadEvent | null>(null);
+  const [busy, setBusy] = useState(false);
+  const platform = system?.platform;
+  const nvidia = system?.gpu_kind === "nvidia" && platform === "windows";
+  const apple = system?.gpu_kind === "apple";
+  const beta = (platform === "windows" || platform === "linux") && !nvidia;
+  if (!(nvidia || apple || beta)) {
     return null;
   }
-  const change = async (device: string) => {
-    await save({ device: device === "cpu" ? "cpu" : "auto" });
-    if (overview?.engine.state === "running") {
-      try {
-        await api.engineRestart();
-        await refresh();
-        toast.ok(device === "cpu" ? "Now on the processor" : "Now on the graphics card");
-      } catch (e) {
-        toast.bad(errText(e));
+  const device = settings?.device ?? "auto";
+  // Without an NVIDIA or Apple engine, "auto" means the processor.
+  const value = device === "auto" && beta ? "cpu" : device;
+  const options = [
+    ...(nvidia || apple ? [{ value: "auto", label: "Graphics card" }] : []),
+    ...(beta ? [{ value: "vulkan", label: "AMD or Intel card (beta)" }] : []),
+    { value: "cpu", label: "Processor" },
+  ];
+
+  const change = async (next: string) => {
+    setBusy(true);
+    try {
+      if (next === "vulkan") {
+        const packs = await api.packInfo();
+        if (!packs.find((p) => p.pack === "vulkan_engine")?.present) {
+          const un = await api.onDownload(setDl);
+          try {
+            await api.downloadPacks(["vulkan_engine"]);
+          } finally {
+            un();
+            setDl(null);
+          }
+        }
       }
+      await save({ device: next === "cpu" ? "cpu" : next === "vulkan" ? "vulkan" : "auto" });
+      if (overview?.engine.state !== "running" && next !== "vulkan") {
+        return;
+      }
+      // Start it now on the beta, so a card it can't use shows up here rather than on the next line.
+      const state = await api.engineRestart();
+      await refresh();
+      const accel = state.state === "running" ? state.accel : undefined;
+      if (next === "vulkan" && accel !== "vulkan") {
+        toast.bad("Booth couldn’t start on your graphics card, so it’s using the processor. Please tell us which card you have.");
+      } else {
+        toast.ok(accel === "cpu" ? "Now on the processor" : "Now on the graphics card");
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setBusy(false);
     }
   };
+  const pct = dl?.total_bytes ? Math.round((dl.done_bytes / dl.total_bytes) * 100) : 0;
+  const sub = dl
+    ? `Downloading the graphics engine · ${pct}% · ${(dl.rate / 1e6).toFixed(1)} MB/s`
+    : value === "vulkan"
+      ? "Beta for AMD and Intel cards. Tell us if it worked for you at nofacetube.com/tools/booth/gpu-beta"
+      : "The graphics card is faster. The processor keeps the card free for games or video work.";
   return (
     <>
-      <Row sub="The graphics card is faster. The processor keeps the card free for games or video work." title="Run on">
-        <Dropdown
-          label="Run on"
-          onChange={change}
-          options={[
-            { value: "auto", label: "Graphics card" },
-            { value: "cpu", label: "Processor" },
-          ]}
-          style={{ width: 170 }}
-          value={settings?.device ?? "auto"}
-        />
+      <Row sub={sub} title="Run on">
+        {busy && !dl ? <span className="spinner" /> : null}
+        <Dropdown label="Run on" onChange={change} options={options} style={{ width: 210 }} value={value} />
       </Row>
+      {value === "vulkan" ? (
+        <button
+          className="btn ghost sm"
+          onClick={() => api.openUrl(GPU_BETA_URL).catch((e) => toast.bad(errText(e)))}
+          style={{ alignSelf: "flex-start" }}
+          type="button"
+        >
+          Report how the beta went
+        </button>
+      ) : null}
       <div className="divider" />
     </>
   );
