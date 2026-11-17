@@ -409,6 +409,17 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         if z.health().await {
+            // The Vulkan engine runs on the processor when it finds no card it can use, and its
+            // processor code is slower than the bundled engine's. Hand over to the next choice.
+            if choice.accel == Accel::Vulkan && log_tail(&log_path, 200).contains(" backend=CPU ") {
+                crate::diag::note("engine: the Vulkan engine found no graphics card it can use");
+                #[cfg(unix)]
+                drop(child);
+                #[cfg(not(unix))]
+                std::mem::forget(child);
+                let _ = stop_when_idle(Duration::from_secs(5)).await;
+                bail!("the graphics card engine found no AMD or Intel card it can use");
+            }
             crate::diag::note(format!("engine: ready, pid {pid}, in {:.1} s", t0.elapsed().as_secs_f64()));
             // Detach: the engine outlives this process on purpose. On Unix, dropping tokio's
             // handle (kill_on_drop is off) leaves it running and lets tokio reap it once it exits,
