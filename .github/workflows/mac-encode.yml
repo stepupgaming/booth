@@ -1,0 +1,87 @@
+name: Mac Exact-mode encode
+
+# A Mac (M2) user got "reference audio encoding failed (maximum 60 seconds)" in Exact mode. This
+# runs the Metal engine from a released Booth-mac.dmg on Apple Silicon and asks it for an Exact
+# take from a 10, 45 and 60 second clip, on Metal and on the processor, printing the engine log.
+# Then it builds booth-mcp from this branch and makes the same take the way the app does.
+# See scripts/mac-encode-check.py.
+#
+# GitHub's Macs are virtual machines. The job prints whether Metal is there; a pass on the
+# processor, or on a VM's Metal, doesn't clear real Macs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release whose Mac engine to test"
+        required: true
+        default: v0.5.1
+  push:
+    branches: [ci/mac-encode]
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || 'v0.5.1' }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  encode:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Model cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/booth-models
+          key: booth-models-exact-${{ hashFiles('crates/booth-core/models.lock.json') }}
+
+      - name: This Mac
+        id: mac
+        shell: bash
+        run: |
+          uname -a
+          sw_vers
+          sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
+          system_profiler SPDisplaysDataType || true
+          cat > /tmp/metal.swift <<'EOF'
+          import Metal
+          if let d = MTLCreateSystemDefaultDevice() {
+              print("Metal device: \(d.name), unified memory \(d.hasUnifiedMemory), recommended working set \(d.recommendedMaxWorkingSetSize / 1_048_576) MB")
+          } else {
+              print("Metal device: none")
+          }
+          EOF
+          out=$(swift /tmp/metal.swift 2>&1 || true)
+          echo "$out"
+          if echo "$out" | grep -q "Metal device: none"; then echo "metal=no" >> "$GITHUB_OUTPUT";
+          elif echo "$out" | grep -q "Metal device:"; then echo "metal=yes" >> "$GITHUB_OUTPUT";
+          else echo "metal=unknown" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Engine from the release
+        shell: bash
+        run: |
+          mkdir -p dl && gh release download "$TAG" --repo "${{ github.repository }}" -p Booth-mac.dmg -D dl
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/booth-dmg dl/Booth-mac.dmg
+          ditto /tmp/booth-dmg/Booth.app/Contents/Resources/engine-metal "$RUNNER_TEMP/engine-metal"
+          hdiutil detach /tmp/booth-dmg
+          ls -la "$RUNNER_TEMP/engine-metal"
+
+      - name: booth-mcp from this branch
+        shell: bash
+        run: cargo build --release -p booth-mcp
+
+      - name: Exact encode, Metal and processor
+        shell: bash
+        run: |
+          python3 -I scripts/mac-encode-check.py --engine "$RUNNER_TEMP/engine-metal" \
+            --models "$RUNNER_TEMP/booth-models" --metal "${{ steps.mac.outputs.metal }}" \
+            --mcp target/release/booth-mcp

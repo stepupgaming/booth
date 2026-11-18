@@ -13,7 +13,7 @@ import {
   type Pronunciation,
   type Settings as S,
 } from "@workspace/core/booth/api";
-import { useBooth } from "@workspace/core/booth/store";
+import { isPhone, useBooth } from "@workspace/core/booth/store";
 import { Dropdown, Icon, Switch, usePlayer, useToast } from "@workspace/core/booth/ui";
 
 const TOOLS: [string, string][] = [
@@ -605,9 +605,27 @@ function LogView() {
       toast.bad(errText(e));
     }
   };
+  const phone = isPhone(useBooth((s) => s.system));
+  const [saving, setSaving] = useState(false);
+  const saveReport = async () => {
+    setSaving(true);
+    try {
+      await api.saveReport();
+      if (!phone) {
+        toast.ok("Report saved on your Desktop. Send us that file.");
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn sm" disabled={saving} onClick={saveReport} type="button">
+          {phone ? "Share a report" : "Save a report"}
+        </button>
         <button className="btn ghost sm" onClick={() => (text === null ? load() : setText(null))} type="button">
           {text === null ? "Show log" : "Hide log"}
         </button>
@@ -727,7 +745,7 @@ export function Settings() {
         </label>
       </Section>
 
-      <Section sub="What Booth asked the voice engine to do and how it went. Copy it into a bug report if something gets stuck." title="Log">
+      <Section sub="What Booth asked the voice engine to do and how it went. If something goes wrong, save a report and send us the one file it makes." title="Log">
         <LogView />
       </Section>
     </>

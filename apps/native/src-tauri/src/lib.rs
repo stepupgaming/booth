@@ -867,6 +867,35 @@ async fn read_log() -> Res<String> {
     Ok(booth_core::diag::report(300))
 }
 
+/// Settings > Log > Save a report: one zip with Booth's logs. On a computer it lands on the Desktop
+/// and is shown in its folder; on a phone it opens the share sheet. Returns where the file is.
+#[tauri::command]
+async fn save_report(app: AppHandle) -> Res<String> {
+    let about = format!(
+        "Booth {}\n{} {}\nRun on: {:?}\n\nengine.json:\n{}\n",
+        app.package_info().version,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        settings::load().device,
+        std::fs::read_to_string(paths::engine_lock_file()).unwrap_or_else(|_| "(no engine running)".into())
+    );
+    #[cfg(target_os = "android")]
+    {
+        let dir = paths::home().join("reports");
+        let path = booth_core::diag::save_report(&dir, &about).map_err(err_chain)?;
+        android_work::share(std::slice::from_ref(&path), "Booth report")?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        let dir = booth_core::diag::report_folder();
+        let path = booth_core::diag::save_report(&dir, &about).map_err(err_chain)?;
+        let _ = app.opener().reveal_item_in_dir(&path);
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
 /// A line from the page (it went to the background, an error it showed) into booth.log.
 #[tauri::command]
 async fn log_note(text: String) -> Res<()> {
@@ -1120,6 +1149,7 @@ pub fn run() {
             check_update,
             install_update,
             read_log,
+            save_report,
             log_note,
         ])
         .build(tauri::generate_context!())

@@ -63,6 +63,38 @@ pub fn report(lines: usize) -> String {
     out
 }
 
+/// Where "Save a report" puts its file on a computer: the Desktop, else Downloads, else Booth's folder.
+pub fn report_folder() -> std::path::PathBuf {
+    dirs::desktop_dir()
+        .filter(|d| d.is_dir())
+        .or_else(|| dirs::download_dir().filter(|d| d.is_dir()))
+        .unwrap_or_else(paths::home)
+}
+
+/// One zip in `dir` holding Booth's logs (booth.log, the engine's log and the run before it) and
+/// `about.txt` with `about` in it, so people send a single file instead of a folder screenshot.
+pub fn save_report(dir: &std::path::Path, about: &str) -> anyhow::Result<std::path::PathBuf> {
+    use anyhow::Context;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H%M%S");
+    let path = dir.join(format!("Booth report {stamp}.zip"));
+    let file = std::fs::File::create(&path).with_context(|| format!("creating {}", path.display()))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("about.txt", opts)?;
+    zip.write_all(about.as_bytes())?;
+    let logs = paths::logs_dir();
+    for name in ["booth.log", "booth.log.1", "engine.log", "engine.prev.log"] {
+        if let Ok(bytes) = std::fs::read(logs.join(name)) {
+            zip.start_file(name, opts)?;
+            zip.write_all(&bytes)?;
+        }
+    }
+    zip.finish()?;
+    note(format!("report saved: {}", path.display()));
+    Ok(path)
+}
+
 /// Whether a process id is still running (unknown counts as alive).
 pub fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]

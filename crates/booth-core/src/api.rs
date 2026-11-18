@@ -268,7 +268,23 @@ impl Zonos {
     }
 
     /// Synthesize a whole take as a WAV file.
+    ///
+    /// If the engine couldn't encode an Exact voice's recording on the graphics card, it is
+    /// restarted on the processor and the take is tried once more there.
     pub async fn generate(&self, req: &GenerateRequest) -> Result<Audio> {
+        let generation = crate::engine::fallback_generation();
+        match self.generate_once(req).await {
+            Err(e) if e.downcast_ref::<ReferenceEncodeFailed>().is_some() => {
+                match crate::engine::processor_fallback(&self.base, generation).await {
+                    Some(z) => z.generate_once(req).await,
+                    None => Err(e),
+                }
+            }
+            r => r,
+        }
+    }
+
+    async fn generate_once(&self, req: &GenerateRequest) -> Result<Audio> {
         let _busy = crate::engine::BusyGuard::new();
         let t0 = std::time::Instant::now();
         let what = format!(
@@ -315,6 +331,11 @@ impl Zonos {
         let status = r.status();
         if !status.is_success() {
             let msg = r.text().await.unwrap_or_default();
+            if status.as_u16() == 400 && msg.contains(REFERENCE_ENCODE_FAILED) {
+                // The log keeps the engine's own words; people see Booth's.
+                crate::diag::note(format!("engine said: {}", msg.trim()));
+                return Err(ReferenceEncodeFailed.into());
+            }
             bail!("{}", friendly_error(status.as_u16(), &msg));
         }
         let header = |n: &str| r.headers().get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
@@ -363,6 +384,27 @@ pub fn b64(bytes: &[u8]) -> String {
 }
 
 /// Turn the server's error body into one sentence a person can act on.
+/// What the engine says (HTTP 400) when it can't turn a voice's recording into the codes Exact
+/// mode speaks from. The same words cover an empty clip, one over the length limit and the codec
+/// encoder failing, so the "(maximum 60 seconds)" after it is no clue to the cause.
+const REFERENCE_ENCODE_FAILED: &str = "reference audio encoding failed";
+
+/// The engine couldn't prepare an Exact voice's recording. Its message is for developers, so
+/// people see this one.
+#[derive(Debug)]
+pub struct ReferenceEncodeFailed;
+
+impl std::fmt::Display for ReferenceEncodeFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Booth couldn't get this voice's recording ready for Exact mode. The voice still works in \
+             Shapeable mode. If it keeps happening, press Save a report in Settings and send us the file.",
+        )
+    }
+}
+
+impl std::error::Error for ReferenceEncodeFailed {}
+
 fn friendly_error(status: u16, body: &str) -> String {
     let detail = serde_json::from_str::<Value>(body)
         .ok()

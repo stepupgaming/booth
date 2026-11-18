@@ -587,6 +587,8 @@ export function installMock() {
             });
           }
           return null;
+        case "save_report":
+          return "C:\\Users\\you\\Desktop\\Booth report 2026-11-17 120000.zip";
         case "read_log":
           return [
             "== booth.log (sample)",

@@ -369,6 +369,9 @@ export const api = {
   installUpdate: () => invoke<void>("install_update"),
   /** booth.log and the engine's log, for Settings → Log. */
   readLog: () => invoke<string>("read_log"),
+  /** Zip the logs into one file: on the Desktop (shown in its folder), or the share sheet on a
+   * phone. Resolves to where the file is. */
+  saveReport: () => invoke<string>("save_report"),
   /** One line into booth.log. Never throws: logging must not break anything. */
   logNote: (text: string) =>
     invoke<void>("log_note", { text }).catch(() => undefined),

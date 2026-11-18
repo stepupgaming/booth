@@ -74,6 +74,24 @@ pub fn choices(device: Device) -> Vec<EngineChoice> {
 
 pub const DEFAULT_PORT: u16 = 47219;
 
+/// Set once an Exact recording failed on the graphics card in this run: from then on this process
+/// starts the engine on the processor, whatever Settings says. See `processor_fallback`.
+static PROCESSOR_ONLY: AtomicBool = AtomicBool::new(false);
+/// The port to start on when it's free: the one the engine had before a fallback restart, so
+/// clients still holding the old address reach the new engine.
+static FALLBACK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static FALLBACK_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static PREFER_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// The device to start the engine on: the setting, unless this run fell back to the processor.
+fn device() -> Device {
+    if PROCESSOR_ONLY.load(Ordering::SeqCst) {
+        Device::Cpu
+    } else {
+        settings::load().device
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineLock {
     pub pid: u32,
@@ -126,7 +144,7 @@ pub async fn state() -> EngineState {
         let accel = lock.accel.unwrap_or(Accel::Cuda);
         return EngineState::Running { port: lock.port, pid: lock.pid, packs: lock.packs, accel };
     }
-    if choices(settings::load().device).is_empty() {
+    if choices(device()).is_empty() {
         return EngineState::NoEngine { looked_in: paths::engine_dir().display().to_string() };
     }
     let models = paths::models_dir();
@@ -224,8 +242,11 @@ pub async fn ensure(who: &str) -> Result<Zonos> {
 }
 
 fn free_port() -> u16 {
-    if std::net::TcpListener::bind(("127.0.0.1", DEFAULT_PORT)).is_ok() {
-        return DEFAULT_PORT;
+    let prefer = PREFER_PORT.load(Ordering::SeqCst);
+    for port in [prefer, DEFAULT_PORT] {
+        if port != 0 && std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
     }
     std::net::TcpListener::bind(("127.0.0.1", 0))
         .and_then(|l| l.local_addr())
@@ -321,7 +342,7 @@ fn laci_heads(dir: &Path) -> Vec<(String, PathBuf)> {
 /// an old card), fall back to the processor rather than leave Booth without a voice.
 pub async fn start(who: &str) -> Result<Zonos> {
     crate::models::refresh_small_files(&paths::models_dir()).await;
-    let list = choices(settings::load().device);
+    let list = choices(device());
     if list.is_empty() {
         bail!("the voice engine isn't installed ({} is missing); reinstalling Booth puts it back", paths::engine_dir().display());
     }
@@ -674,6 +695,50 @@ pub async fn stop_unless_wanted(wait: Duration) -> bool {
         return false;
     }
     matches!(stop_when_idle(wait).await, Ok(true))
+}
+
+/// An Exact request failed because the engine couldn't encode the voice's recording, on an
+/// engine that runs on the graphics card. That encoder (the codec encoder and its SSL teacher)
+/// is the one part a Mac's GPU can fail on while everything else works: a Metal kernel it can't
+/// run, or a buffer it can't get on a Mac with little memory. So restart the engine on the
+/// processor, on the same port, and keep it there for the rest of this run. Returns the new
+/// engine to retry on, or `None` when a fallback doesn't apply or didn't work.
+pub async fn processor_fallback(base: &str, generation: u32) -> Option<Zonos> {
+    // Studio makes several takes at once, and each one that fails lands here. One restarts the
+    // engine; the others wait, then retry on the engine it started.
+    let _one = FALLBACK.lock().await;
+    if FALLBACK_GENERATION.load(Ordering::SeqCst) != generation {
+        return ensure("processor fallback").await.ok();
+    }
+    let lock = read_lock()?;
+    // Already on the processor: the recording itself is the problem, a restart won't help.
+    if lock.base_url() != base || lock.accel == Some(Accel::Cpu) {
+        return None;
+    }
+    let was = format!("{:?}", lock.accel.unwrap_or(Accel::Cuda)).to_lowercase();
+    crate::diag::note(format!(
+        "engine: the {was} engine couldn't encode a voice recording for Exact mode; restarting on the processor"
+    ));
+    PROCESSOR_ONLY.store(true, Ordering::SeqCst);
+    PREFER_PORT.store(lock.port, Ordering::SeqCst);
+    if !matches!(stop_when_idle(Duration::from_secs(120)).await, Ok(true)) {
+        crate::diag::note("engine: still busy, so it moves to the processor the next time it starts");
+        return None;
+    }
+    let started = ensure("processor fallback").await;
+    FALLBACK_GENERATION.fetch_add(1, Ordering::SeqCst);
+    match started {
+        Ok(z) => Some(z),
+        Err(e) => {
+            crate::diag::note(format!("engine: the processor restart failed: {e:#}"));
+            None
+        }
+    }
+}
+
+/// Read before a request; pass to `processor_fallback` if it fails.
+pub fn fallback_generation() -> u32 {
+    FALLBACK_GENERATION.load(Ordering::SeqCst)
 }
 
 /// Restart so newly downloaded packs are loaded.
