@@ -10,7 +10,7 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
-## 0.5.3 (unreleased)
+## 0.5.3 (2026-11-17)
 
 - **Fixed on Mac: Exact mode failed with "reference audio encoding failed".** When the graphics
   chip can't get a voice's recording ready, Booth now restarts the engine on the processor and
