@@ -10,6 +10,16 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.5.3 (unreleased)
+
+- **Fixed on Mac: Exact mode failed with "reference audio encoding failed".** When the graphics
+  chip can't get a voice's recording ready, Booth now restarts the engine on the processor and
+  makes the take there. Booth stays on the processor until you quit it. If it still fails, the
+  message says so in plain words and points to the report button below.
+- **Save a report.** Settings > Log has a Save a report button. It puts one zip file with Booth's
+  logs on your Desktop, so you can send us a single file when something goes wrong. On a phone
+  the button is Share a report and opens the share sheet.
+
 ## 0.5.2 (2026-11-17)
 
 - **Script is now called Long-form.** It works the same: paste or open a whole script, Booth
@@ -20,13 +30,6 @@ Each version starts with a `## <version> (<date>)` heading. A release candidate 
   takes stay in Studio either way.
 - **Support NoFaceTube.** Settings > Updates has a small "Made by NoFaceTube · Support" line. Support
   opens nofacetube.com, where you can leave a tip if Booth saves you time. Booth stays free.
-- **Fixed on Mac: Exact mode failed with "reference audio encoding failed".** When the graphics
-  chip can't get a voice's recording ready, Booth now restarts the engine on the processor and
-  makes the take there. Booth stays on the processor until you quit it. If it still fails, the
-  message says so in plain words and points to the report button below.
-- **Save a report.** Settings > Log has a Save a report button. It puts one zip file with Booth's
-  logs on your Desktop, so you can send us a single file when something goes wrong. On a phone
-  the button is Share a report and opens the share sheet.
 
 ## 0.5.1 (2026-11-17)
 
