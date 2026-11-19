@@ -104,6 +104,10 @@ pub struct EngineLock {
     /// What it runs on (missing in locks written by 0.1, which always ran CUDA).
     #[serde(default)]
     pub accel: Option<Accel>,
+    /// The one decoder it loaded (`keep2_plain` | `full_mr`); missing in locks from before 0.5.4,
+    /// whose engines loaded every decoder they found.
+    #[serde(default)]
+    pub decoder: Option<String>,
 }
 
 impl EngineLock {
@@ -126,6 +130,11 @@ pub enum EngineState {
 fn read_lock() -> Option<EngineLock> {
     let text = std::fs::read_to_string(paths::engine_lock_file()).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+/// The engine was last started on the processor (from its lock file; no health check).
+pub fn on_processor() -> bool {
+    read_lock().is_some_and(|l| l.accel == Some(Accel::Cpu))
 }
 
 /// The running engine, if its lock file points at a server that answers.
@@ -293,7 +302,12 @@ pub fn command_line(engine: &Path, accel: Accel, models: &Path, port: u16) -> Re
         ]);
         packs.push(Pack::Exact);
     }
-    // zac-keep2.gguf (default) and zac.gguf beside the backbone are discovered by the server.
+    // Only the decoder the setting picks. Named nothing, the server loads both, and the unused
+    // full-size one (2 GB) ran a Mac with 8 GB out of graphics memory (2026-11-18 report).
+    let (_, zac) = start_decoder(models);
+    if zac.is_file() {
+        args.extend(["--zac".into(), s(zac)]);
+    }
     if p("zac.gguf").is_file() {
         packs.push(Pack::FullDecoder);
     }
@@ -301,6 +315,17 @@ pub fn command_line(engine: &Path, accel: Accel, models: &Path, port: u16) -> Re
         args.extend(["--laci-heads".into(), format!("{lang}={}", file.display())]);
     }
     Ok((exe, args, packs))
+}
+
+/// The decoder an engine started now loads: the full-size one when the setting asks for it and it
+/// is downloaded, otherwise the small default.
+pub fn start_decoder(models: &Path) -> (&'static str, PathBuf) {
+    let full = models.join("zac.gguf");
+    if settings::load().decoder.as_deref() == Some("full_mr") && full.is_file() {
+        ("full_mr", full)
+    } else {
+        ("keep2_plain", models.join("zac-keep2.gguf"))
+    }
 }
 
 /// LACI alignment heads per server language, from the engine's `laci_heads` folder.
@@ -423,6 +448,7 @@ async fn start_one(who: &str, choice: &EngineChoice) -> Result<Zonos> {
         started_at: chrono::Utc::now(),
         packs,
         accel: Some(choice.accel),
+        decoder: Some(start_decoder(&models)).filter(|(_, f)| f.is_file()).map(|(id, _)| id.to_string()),
     };
     std::fs::write(paths::engine_lock_file(), serde_json::to_vec_pretty(&lock)?)?;
 
@@ -734,6 +760,53 @@ pub async fn processor_fallback(base: &str, generation: u32) -> Option<Zonos> {
             None
         }
     }
+}
+
+/// Restart the engine on the same device and port, once for every take that hit the same problem:
+/// Studio makes several takes at once, so the first one here restarts it and the others wait, then
+/// use the engine it started. `applies` gets the running engine's lock and says whether a restart
+/// would help. Returns the engine to retry on, or `None`.
+async fn restart_once(base: &str, generation: u32, why: &str, applies: impl FnOnce(&EngineLock) -> bool) -> Option<Zonos> {
+    let _one = FALLBACK.lock().await;
+    if FALLBACK_GENERATION.load(Ordering::SeqCst) != generation {
+        return ensure("restart").await.ok();
+    }
+    let lock = read_lock()?;
+    if lock.base_url() != base || !applies(&lock) {
+        return None;
+    }
+    crate::diag::note(format!("engine: {why}; restarting it"));
+    PREFER_PORT.store(lock.port, Ordering::SeqCst);
+    if !matches!(stop_when_idle(Duration::from_secs(120)).await, Ok(true)) {
+        crate::diag::note("engine: still busy, so it wasn't restarted");
+        return None;
+    }
+    let started = ensure("restart").await;
+    FALLBACK_GENERATION.fetch_add(1, Ordering::SeqCst);
+    match started {
+        Ok(z) => Some(z),
+        Err(e) => {
+            crate::diag::note(format!("engine: the restart failed: {e:#}"));
+            None
+        }
+    }
+}
+
+/// A take failed inside the engine twice in a row (HTTP 500). On a Mac that runs out of graphics
+/// memory, the engine's GPU backend stays broken after the first failure and every take after it
+/// fails too, until the engine is started again. Returns the fresh engine, or `None`.
+pub async fn recover(base: &str, generation: u32) -> Option<Zonos> {
+    restart_once(base, generation, "it failed the same take twice", |_| true).await
+}
+
+/// A take asked for a decoder the running engine didn't load (the setting changed since it
+/// started). Restarts it when a fresh start would load that decoder; `None` when it wouldn't.
+pub async fn switch_decoder(base: &str, generation: u32, want: &str) -> Option<Zonos> {
+    if start_decoder(&paths::models_dir()).0 != want {
+        return None;
+    }
+    let why = format!("a take asked for the {want} decoder");
+    restart_once(base, generation, &why, |lock| lock.decoder.as_deref() != Some(want)).await
 }
 
 /// Read before a request; pass to `processor_fallback` if it fails.

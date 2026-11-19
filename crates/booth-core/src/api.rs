@@ -9,6 +9,18 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// How many times a take that ends mid-sound is made again (see [`Zonos::generate`]).
+pub const CUT_RETRIES: u32 = 2;
+/// A take that still ends louder than [`crate::takes::HARD_CUT_DB`] is chopped mid-word in a way a
+/// fade can't hide, so it gets more redos than a take that only ends a little loud.
+pub const HARD_CUT_RETRIES: u32 = 5;
+/// The fade on a take that still ends mid-sound after the retries.
+const CUT_FADE_MS: u32 = 30;
+
+fn fresh_seed() -> u64 {
+    1 + (uuid::Uuid::new_v4().as_u128() % 2_147_483_000) as u64
+}
+
 #[derive(Clone)]
 pub struct Zonos {
     pub base: String,
@@ -269,15 +281,93 @@ impl Zonos {
 
     /// Synthesize a whole take as a WAV file.
     ///
-    /// If the engine couldn't encode an Exact voice's recording on the graphics card, it is
-    /// restarted on the processor and the take is tried once more there.
+    /// The model sometimes predicts the end of speech while the last sound is still going, so the
+    /// take stops mid-word (about half of Exact takes in a 2026-11-18 test on ZONOS3 96d9e0e, with
+    /// LACI on or off; Shapeable takes rarely). Such a take is made again with a fresh seed, up to
+    /// [`CUT_RETRIES`] times (up to [`HARD_CUT_RETRIES`] while it still ends loud), and the one
+    /// that ends most cleanly is kept. If every try ends
+    /// mid-sound, the kept one gets a short fade so it doesn't click. The kept take's own seed is
+    /// returned, so asking for that seed again gives the same take.
     pub async fn generate(&self, req: &GenerateRequest) -> Result<Audio> {
+        let first = self.generate_fallback(req).await?;
+        let Some(db) = crate::takes::ending_db(&first.wav) else { return Ok(first) };
+        let mut best = (db, first);
+        let mut redone = 0;
+        // On the processor an Exact take can take a minute or more, so one redo at most there.
+        let slow = crate::engine::on_processor();
+        loop {
+            let limit = if slow {
+                1
+            } else if best.0 > crate::takes::HARD_CUT_DB {
+                HARD_CUT_RETRIES
+            } else {
+                CUT_RETRIES
+            };
+            if best.0 <= crate::takes::CUT_DB || redone >= limit {
+                break;
+            }
+            redone += 1;
+            crate::diag::note(format!("take ends mid-sound ({:.0} dB), redoing ({redone}/{limit})", best.0));
+            let mut again = req.clone();
+            again.seed = Some(fresh_seed());
+            match self.generate_fallback(&again).await {
+                Ok(a) => {
+                    let db = crate::takes::ending_db(&a.wav).unwrap_or(0.0);
+                    if db < best.0 {
+                        best = (db, a);
+                    }
+                }
+                Err(e) => {
+                    crate::diag::note(format!("redo failed, keeping the take: {e:#}"));
+                    break;
+                }
+            }
+        }
+        let (db, mut audio) = best;
+        if db > crate::takes::CUT_DB {
+            crate::diag::note(format!("every try ended mid-sound; fading the last {CUT_FADE_MS} ms"));
+            audio.wav = crate::takes::fade_out(&audio.wav, CUT_FADE_MS)?;
+        }
+        Ok(audio)
+    }
+
+    /// One take, with the ways out of an engine problem:
+    /// - the engine couldn't encode an Exact voice's recording on the graphics card: it restarts on
+    ///   the processor and the take is tried once more there;
+    /// - the take failed inside the engine (HTTP 500): it is tried again, and if that fails too
+    ///   the engine restarts and it is tried once more (a Mac out of graphics memory needs that);
+    /// - the take asked for a decoder the engine didn't load: the engine restarts with it, or the
+    ///   take uses the engine's own decoder when a restart wouldn't load the one asked for.
+    async fn generate_fallback(&self, req: &GenerateRequest) -> Result<Audio> {
         let generation = crate::engine::fallback_generation();
         match self.generate_once(req).await {
             Err(e) if e.downcast_ref::<ReferenceEncodeFailed>().is_some() => {
                 match crate::engine::processor_fallback(&self.base, generation).await {
                     Some(z) => z.generate_once(req).await,
                     None => Err(e),
+                }
+            }
+            Err(e) if e.downcast_ref::<EngineFailed>().is_some() => {
+                crate::diag::note("the engine failed this take; trying it again");
+                let r = match self.generate_once(req).await {
+                    Err(e) if e.downcast_ref::<EngineFailed>().is_some() => {
+                        match crate::engine::recover(&self.base, generation).await {
+                            Some(z) => z.generate_once(req).await,
+                            None => Err(e),
+                        }
+                    }
+                    r => r,
+                };
+                r.map_err(|e| if e.downcast_ref::<EngineFailed>().is_some() { anyhow::anyhow!(GAVE_UP) } else { e })
+            }
+            Err(e) if e.downcast_ref::<UnknownDecoder>().is_some() => {
+                let want = req.decoder.clone().unwrap_or_default();
+                match crate::engine::switch_decoder(&self.base, generation, &want).await {
+                    Some(z) => z.generate_once(req).await,
+                    None => {
+                        crate::diag::note(format!("the {want} decoder isn't available; using the engine's own"));
+                        self.generate_once(&GenerateRequest { decoder: None, ..req.clone() }).await
+                    }
                 }
             }
             r => r,
@@ -335,6 +425,14 @@ impl Zonos {
                 // The log keeps the engine's own words; people see Booth's.
                 crate::diag::note(format!("engine said: {}", msg.trim()));
                 return Err(ReferenceEncodeFailed.into());
+            }
+            if status.as_u16() == 500 && msg.contains(GENERATION_FAILED) {
+                crate::diag::note(format!("engine said: {}", msg.trim()));
+                return Err(EngineFailed.into());
+            }
+            if status.as_u16() == 400 && msg.contains(UNKNOWN_DECODER) {
+                crate::diag::note(format!("engine said: {}", msg.trim()));
+                return Err(UnknownDecoder.into());
             }
             bail!("{}", friendly_error(status.as_u16(), &msg));
         }
@@ -404,6 +502,40 @@ impl std::fmt::Display for ReferenceEncodeFailed {
 }
 
 impl std::error::Error for ReferenceEncodeFailed {}
+
+/// What the engine says (HTTP 500) when a take fails inside it: on a Mac, most often the graphics
+/// card running out of memory, after which every take fails until the engine restarts.
+const GENERATION_FAILED: &str = "generation failed";
+
+/// The take failed inside the engine (see [`GENERATION_FAILED`]).
+#[derive(Debug)]
+pub struct EngineFailed;
+
+impl std::fmt::Display for EngineFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the voice engine failed this take (generation failed)")
+    }
+}
+
+/// What people see when a take still fails after the retry and the restart.
+const GAVE_UP: &str = "The voice engine couldn't make this take, even after a restart. If your computer is low on memory, closing other apps can help. If it keeps happening, press Save a report in Settings and send us the file.";
+
+impl std::error::Error for EngineFailed {}
+
+/// What the engine says (HTTP 400) when a request names a decoder it didn't load.
+const UNKNOWN_DECODER: &str = "Unknown decoder";
+
+/// The take asked for a decoder the running engine didn't load.
+#[derive(Debug)]
+pub struct UnknownDecoder;
+
+impl std::fmt::Display for UnknownDecoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the voice engine hasn't loaded the decoder this take asked for")
+    }
+}
+
+impl std::error::Error for UnknownDecoder {}
 
 fn friendly_error(status: u16, body: &str) -> String {
     let detail = serde_json::from_str::<Value>(body)

@@ -189,6 +189,65 @@ pub fn delete(id: &str) -> Result<()> {
 }
 
 /// Join WAV files (same format) with `gap_ms` of silence between them.
+/// How loud a take's last 10 ms are, in dBFS (None when the WAV can't be read). A take whose voice
+/// stops cleanly ends far below [`CUT_DB`]; one that stops mid-sound ends above it.
+pub fn ending_db(wav: &[u8]) -> Option<f64> {
+    let (spec, samples) = read_i16(wav)?;
+    let n = (spec.sample_rate as usize / 100 * spec.channels.max(1) as usize).min(samples.len());
+    if n == 0 {
+        return None;
+    }
+    let tail = &samples[samples.len() - n..];
+    let ms = tail.iter().map(|&s| (s as f64 / 32768.0).powi(2)).sum::<f64>() / n as f64;
+    Some(10.0 * ms.max(1e-12).log10())
+}
+
+/// A take whose last 10 ms are louder than this stopped before its last sound finished.
+pub const CUT_DB: f64 = -50.0;
+/// Louder than this at the very end and the take was chopped mid-word.
+pub const HARD_CUT_DB: f64 = -30.0;
+
+/// Fade the last `ms` of a WAV to silence, so a take that ends mid-sound doesn't click.
+pub fn fade_out(wav: &[u8], ms: u32) -> Result<Vec<u8>> {
+    let (spec, mut samples) = read_i16(wav).context("reading the take's audio")?;
+    let ch = spec.channels.max(1) as usize;
+    let frames = samples.len() / ch;
+    let n = (spec.sample_rate as usize * ms as usize / 1000).min(frames);
+    for i in 0..n {
+        let g = (n - i) as f64 / n as f64; // 1 at the start of the fade, ~0 on the last frame
+        for c in 0..ch {
+            let k = (frames - n + i) * ch + c;
+            samples[k] = (samples[k] as f64 * g * g) as i16;
+        }
+    }
+    let spec = hound::WavSpec { bits_per_sample: 16, sample_format: hound::SampleFormat::Int, ..spec };
+    let mut out = Cursor::new(Vec::new());
+    {
+        let mut w = hound::WavWriter::new(&mut out, spec)?;
+        for s in samples {
+            w.write_sample(s)?;
+        }
+        w.finalize()?;
+    }
+    Ok(out.into_inner())
+}
+
+fn read_i16(wav: &[u8]) -> Option<(hound::WavSpec, Vec<i16>)> {
+    let mut r = hound::WavReader::new(Cursor::new(wav)).ok()?;
+    let s = r.spec();
+    let v: Vec<i16> = match s.sample_format {
+        hound::SampleFormat::Int if s.bits_per_sample <= 16 => r.samples::<i16>().filter_map(|x| x.ok()).collect(),
+        hound::SampleFormat::Int => {
+            let shift = s.bits_per_sample - 16;
+            r.samples::<i32>().filter_map(|x| x.ok()).map(|x| (x >> shift) as i16).collect()
+        }
+        hound::SampleFormat::Float => {
+            r.samples::<f32>().filter_map(|x| x.ok()).map(|x| (x.clamp(-1.0, 1.0) * 32767.0) as i16).collect()
+        }
+    };
+    Some((s, v))
+}
+
 pub fn concat_wavs(parts: &[Vec<u8>], gap_ms: u32) -> Result<Vec<u8>> {
     let gaps = vec![gap_ms; parts.len()];
     Ok(concat_timed(parts, &gaps)?.0)
@@ -241,4 +300,34 @@ pub fn concat_timed(parts: &[Vec<u8>], gaps_ms: &[u32]) -> Result<(Vec<u8>, Vec<
         w.finalize()?;
     }
     Ok((out.into_inner(), spans))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wav(samples: &[i16]) -> Vec<u8> {
+        let spec = hound::WavSpec { channels: 1, sample_rate: 8000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut w = hound::WavWriter::new(&mut out, spec).unwrap();
+            for &s in samples {
+                w.write_sample(s).unwrap();
+            }
+            w.finalize().unwrap();
+        }
+        out.into_inner()
+    }
+
+    #[test]
+    fn a_take_that_stops_mid_sound_is_cut_and_the_fade_clears_it() {
+        let loud: Vec<i16> = (0..8000).map(|i| ((i as f64 * 0.3).sin() * 8000.0) as i16).collect();
+        let mut clean = loud.clone();
+        clean.extend(std::iter::repeat_n(0i16, 800));
+        assert!(ending_db(&wav(&loud)).unwrap() > CUT_DB);
+        assert!(ending_db(&wav(&clean)).unwrap() < CUT_DB);
+        let faded = fade_out(&wav(&loud), 30).unwrap();
+        assert!(ending_db(&faded).unwrap() < ending_db(&wav(&loud)).unwrap() - 15.0);
+        assert_eq!(wav_seconds(&faded), wav_seconds(&wav(&loud)));
+    }
 }
