@@ -10,6 +10,13 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.5.5 (2026-11-19)
+
+- **Fixed on Mac: "the voice engine stopped while loading" with "Insufficient Memory".** On a Mac
+  with 8 GB, the graphics chip can run out of room while the voice engine loads. Booth now starts
+  it on the processor instead and stays there until you quit. Takes are a little slower, but they
+  work.
+
 ## 0.5.4 (2026-11-18)
 
 - **Fixed: takes failing with "generation failed" on Macs with less memory.** Booth loaded both

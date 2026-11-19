@@ -66,8 +66,13 @@ pub fn choices(device: Device) -> Vec<EngineChoice> {
         if dir.file_name().is_some_and(|n| n == "engine") && cfg!(windows) {
             return out;
         }
-        let accel = if cfg!(target_os = "macos") && device == Device::Auto { Accel::Metal } else { Accel::Cpu };
-        out.push(EngineChoice { dir, accel });
+        if cfg!(target_os = "macos") && device == Device::Auto {
+            // A Mac with 8 GB can run out of graphics memory while the engine loads (2026-11-19
+            // report: kIOGPUCommandBufferCallbackErrorOutOfMemory, exit 1). Same engine, on the
+            // processor, next.
+            out.push(EngineChoice { dir: dir.clone(), accel: Accel::Metal });
+        }
+        out.push(EngineChoice { dir, accel: Accel::Cpu });
     }
     out
 }
@@ -371,12 +376,23 @@ pub async fn start(who: &str) -> Result<Zonos> {
     if list.is_empty() {
         bail!("the voice engine isn't installed ({} is missing); reinstalling Booth puts it back", paths::engine_dir().display());
     }
+    start_from(who, &list).await
+}
+
+/// Start the first engine in `list` that comes up.
+async fn start_from(who: &str, list: &[EngineChoice]) -> Result<Zonos> {
     let mut last = None;
     for (i, choice) in list.iter().enumerate() {
         match start_one(who, choice).await {
             Ok(z) => return Ok(z),
             Err(e) if i + 1 < list.len() => {
-                eprintln!("booth: the {:?} engine didn't start, trying the next one: {e:#}", choice.accel);
+                let was = format!("{:?}", choice.accel).to_lowercase();
+                crate::diag::note(format!("engine: the {was} engine didn't start, trying the next one: {e:#}"));
+                // The graphics chip didn't have room for it: don't try it again in this run, so a
+                // restart later doesn't spend another failed load first.
+                if choice.accel == Accel::Metal {
+                    PROCESSOR_ONLY.store(true, Ordering::SeqCst);
+                }
                 last = Some(e);
             }
             Err(e) => return Err(e),
@@ -826,4 +842,42 @@ fn log_tail(p: &Path, n: usize) -> String {
     let text = std::fs::read_to_string(p).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A graphics engine that won't load hands over to the processor, and the rest of the run
+    /// stays there. Runs a real engine: BOOTH_HOME, BOOTH_MODELS_DIR and BOOTH_ENGINE_DIR (an
+    /// engine that takes --cpu). `cargo test -p booth-core metal_fails -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn metal_fails_to_load_then_processor() {
+        let real = paths::bundled_engine_dir().expect("BOOTH_ENGINE_DIR");
+        let broken = std::env::temp_dir().join(format!("booth-no-engine-{}", std::process::id()));
+        std::fs::create_dir_all(&broken).unwrap();
+        let list = [
+            EngineChoice { dir: broken.clone(), accel: Accel::Metal },
+            EngineChoice { dir: real, accel: Accel::Cpu },
+        ];
+        let z = start_from("test", &list).await.expect("the processor engine starts");
+        assert!(z.health().await);
+        assert_eq!(read_lock().unwrap().accel, Some(Accel::Cpu));
+        assert!(PROCESSOR_ONLY.load(Ordering::SeqCst), "later starts skip the graphics engine");
+        assert_eq!(device(), Device::Cpu);
+        stop_when_idle(Duration::from_secs(30)).await.unwrap();
+        std::fs::remove_dir_all(&broken).ok();
+    }
+
+    #[test]
+    fn mac_auto_tries_the_graphics_chip_then_the_processor() {
+        std::env::set_var("BOOTH_ENGINE_DIR", std::env::temp_dir());
+        let accels: Vec<_> = choices(Device::Auto).into_iter().map(|c| c.accel).collect();
+        if cfg!(target_os = "macos") {
+            assert_eq!(accels, [Accel::Metal, Accel::Cpu]);
+        } else {
+            assert_eq!(accels.last(), Some(&Accel::Cpu));
+        }
+    }
 }
