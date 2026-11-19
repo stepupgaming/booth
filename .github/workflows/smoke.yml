@@ -27,7 +27,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # GitHub's Macs run a take on the processor in up to 8 minutes, and since 0.5.5 the "on Metal"
+    # step falls back to the processor when Metal crashes there, so macOS runs the suite three times.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
