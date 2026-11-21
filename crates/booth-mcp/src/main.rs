@@ -105,8 +105,13 @@ struct MakeScriptArgs {
     #[serde(default)]
     line_files: bool,
     /// Save the voiceover and line files as MP3 (128 kbps) instead of WAV (default false).
+    /// `format` wins when both are given.
     #[serde(default)]
     mp3: bool,
+    /// File type for the voiceover and line files: "wav" (default), "mp3", "m4a" (AAC),
+    /// "flac" (lossless, about half a WAV) or "ogg" (Opus, the smallest).
+    #[serde(default)]
+    format: Option<audio::Format>,
     /// Even out loudness: lines at a like level, the voiceover at -14 LUFS with peaks under
     /// -1 dBTP (default false).
     #[serde(default)]
@@ -478,7 +483,7 @@ impl Booth {
         };
         let mut o = batch::ExportOptions {
             lines: a.line_files,
-            format: if a.mp3 { audio::Format::Mp3 } else { audio::Format::Wav },
+            format: a.format.unwrap_or(if a.mp3 { audio::Format::Mp3 } else { audio::Format::Wav }),
             even_loudness: a.even_loudness,
             caption_style: if a.short_captions { captions::Style::Short } else { captions::Style::Sentences },
             vtt: a.vtt,

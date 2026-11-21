@@ -110,6 +110,9 @@ export interface ScriptJob {
   exported?: ScriptExported | null;
 }
 
+/** The audio file types Booth saves. Takes in the Library stay WAV; these are for what leaves Booth. */
+export type AudioFormat = "wav" | "mp3" | "m4a" | "flac" | "ogg";
+
 export interface ScriptExportOptions {
   gap_ms: number;
   para_gap_ms: number;
@@ -117,7 +120,7 @@ export interface ScriptExportOptions {
   captions: boolean;
   lines: boolean;
   /** File type for the voiceover and the line files (Library takes stay WAV). */
-  format: "wav" | "mp3";
+  format: AudioFormat;
   /** Lines at a like level, the voiceover at -14 LUFS with peaks under -1 dBTP. */
   even_loudness: boolean;
   /** Sentence captions, or short ones of 2 to 4 words for Shorts, TikTok and Reels. */
@@ -332,6 +335,23 @@ export const api = {
     invoke<string>("script_captions", { id, options }),
   scriptExport: (id: string, options: ScriptExportOptions) =>
     invoke<ScriptExported>("script_export", { id, options }),
+  /** A take written as `format` into Booth's exports folder, named after `name`; returns its path. */
+  convertTake: (
+    path: string,
+    format: AudioFormat,
+    name?: string,
+    even?: boolean
+  ) => invoke<string>("convert_take", { path, format, name, even }),
+  /** Computer: the save dialog for a take; null when cancelled. The type picked there wins. */
+  saveAs: (path: string, format: AudioFormat, name?: string) =>
+    invoke<{ path: string; format: AudioFormat } | null>("save_as", {
+      path,
+      format,
+      name,
+    }),
+  /** Android: copy files to Music/Booth (captions to Download/Booth); returns where each went. */
+  saveToPhone: (paths: string[]) =>
+    invoke<string[]>("save_to_phone", { paths }),
   /** Android's share sheet with these Booth files. */
   shareFiles: (paths: string[], title?: string) =>
     invoke<void>("share_files", { paths, title }),

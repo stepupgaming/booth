@@ -19,6 +19,10 @@ hex = "0.4"
 hound = "3.5"
 ebur128 = "0.1"
 rusty_mp3 = "1"
+# M4A (AAC), Ogg Opus and FLAC export, all pure Rust. oxideav-aac is vendored with speed fixes.
+oxideav-aac = { path = "../../third_party/oxideav-aac" }
+opus-pure = "0.2.3"
+flacenc = { version = "0.5.1", default-features = false }
 dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
@@ -26,6 +30,10 @@ schemars = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.12"
 encoding_rs = "0.8"
+
+[dev-dependencies]
+# Decodes M4A and FLAC in the export tests.
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "isomp4", "flac"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs = "1"

@@ -1,5 +1,5 @@
-//! Writing a voiceover to disk a line at a time, as WAV or MP3, so a two-hour script never sits
-//! in memory. Optionally evens out loudness: every line to the same level (EBU R128), the whole
+//! Writing a voiceover to disk a line at a time, as WAV, MP3, M4A, FLAC or Ogg Opus, so a
+//! two-hour script never sits in memory. Optionally evens out loudness: every line to the same level (EBU R128), the whole
 //! voiceover to YouTube's -14 LUFS, and a look-ahead limiter that keeps true peaks under -1 dBTP.
 
 use std::collections::VecDeque;
@@ -12,19 +12,53 @@ use ebur128::{EbuR128, Mode};
 use serde::{Deserialize, Serialize};
 
 /// The voiceover's file type.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
     #[default]
     Wav,
     Mp3,
+    /// AAC in an MP4 container: what iPhones, CapCut and most video editors take without fuss.
+    M4a,
+    /// Lossless and about half the size of a WAV.
+    Flac,
+    /// Opus in an Ogg file: the smallest, for chats and the web.
+    Ogg,
 }
 
 impl Format {
+    pub const ALL: [Format; 5] = [Format::Wav, Format::Mp3, Format::M4a, Format::Flac, Format::Ogg];
+
     pub fn ext(self) -> &'static str {
         match self {
             Format::Wav => "wav",
             Format::Mp3 => "mp3",
+            Format::M4a => "m4a",
+            Format::Flac => "flac",
+            Format::Ogg => "ogg",
+        }
+    }
+
+    /// The MIME type, for the Android share sheet and MediaStore.
+    pub fn mime(self) -> &'static str {
+        match self {
+            Format::Wav => "audio/wav",
+            Format::Mp3 => "audio/mpeg",
+            Format::M4a => "audio/mp4",
+            Format::Flac => "audio/flac",
+            Format::Ogg => "audio/ogg",
+        }
+    }
+
+    /// From a file extension or a serialized name ("m4a", "ogg", "opus").
+    pub fn from_ext(ext: &str) -> Option<Format> {
+        match ext.to_ascii_lowercase().as_str() {
+            "wav" => Some(Format::Wav),
+            "mp3" => Some(Format::Mp3),
+            "m4a" | "aac" | "mp4" => Some(Format::M4a),
+            "flac" => Some(Format::Flac),
+            "ogg" | "opus" => Some(Format::Ogg),
+            _ => None,
         }
     }
 }
@@ -223,6 +257,9 @@ impl Mp3Out {
 pub enum AudioFile {
     Wav(hound::WavWriter<BufWriter<File>>),
     Mp3(Box<Mp3Out>, u16),
+    M4a(Box<crate::encode::M4aOut>),
+    Flac(Box<crate::encode::FlacOut>),
+    Ogg(Box<crate::encode::OpusOut>),
 }
 
 impl AudioFile {
@@ -235,6 +272,9 @@ impl AudioFile {
                 AudioFile::Wav(hound::WavWriter::create(path, spec)?)
             }
             Format::Mp3 => AudioFile::Mp3(Box::new(Mp3Out::create(path, rate, channels)?), channels),
+            Format::M4a => AudioFile::M4a(Box::new(crate::encode::M4aOut::create(path, rate, channels)?)),
+            Format::Flac => AudioFile::Flac(Box::new(crate::encode::FlacOut::create(path, rate, channels)?)),
+            Format::Ogg => AudioFile::Ogg(Box::new(crate::encode::OpusOut::create(path, rate, channels)?)),
         })
     }
 
@@ -248,6 +288,9 @@ impl AudioFile {
                 w.flush()?;
             }
             AudioFile::Mp3(m, channels) => m.write(samples, *channels)?,
+            AudioFile::M4a(m) => m.write(samples)?,
+            AudioFile::Flac(f) => f.write(samples)?,
+            AudioFile::Ogg(o) => o.write(samples)?,
         }
         Ok(())
     }
@@ -256,6 +299,9 @@ impl AudioFile {
         match self {
             AudioFile::Wav(w) => w.finalize()?,
             AudioFile::Mp3(m, _) => m.finish()?,
+            AudioFile::M4a(m) => m.finish()?,
+            AudioFile::Flac(f) => f.finish()?,
+            AudioFile::Ogg(o) => o.finish()?,
         }
         Ok(())
     }
@@ -614,6 +660,13 @@ pub fn write_line(src: &Path, dst: &Path, format: Format, gain_db: Option<f64>) 
     Ok(())
 }
 
+/// One take saved as `format`. With `even`, it is brought to [`TARGET_LUFS`] with peaks under
+/// [`CEILING_DBTP`], the same as "Even out loudness" does for a whole voiceover.
+pub fn convert(src: &Path, dst: &Path, format: Format, even: bool) -> Result<()> {
+    let gain = if even { plan_gains(&[src.to_path_buf()], &[0])?.first().copied() } else { None };
+    write_line(src, dst, format, gain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,7 +721,7 @@ mod tests {
         // the quiet line is raised to meet the loud one, at most 6 dB; the short one only moves with the whole
         assert!((gains[0] - gains[1] - LINE_RANGE_DB).abs() < 1e-9, "{gains:?}");
         assert_eq!(gains[2], gains[1]);
-        for fmt in [Format::Wav, Format::Mp3] {
+        for fmt in Format::ALL {
             let out = dir.join(format!("out.{}", fmt.ext()));
             let mut j = Joiner::new(vec![(out.clone(), fmt)], true);
             for (i, p) in paths.iter().enumerate() {
@@ -686,6 +739,17 @@ mod tests {
                 assert!(tp <= CEILING_DBTP + 0.05, "{tp}");
                 assert_eq!(read_wav(&out).unwrap().frames(), (6.4 * RATE as f64) as usize + 2 * RATE as usize / 4);
             }
+            // what a player hears from each format lands near YouTube's level too
+            let (rate, ch, got) = crate::encode::decode::any(&out);
+            let mut m = EbuR128::new(ch as u32, rate, Mode::I).unwrap();
+            m.add_frames_f32(&got).unwrap();
+            let lufs = m.loudness_global().unwrap();
+            assert!((lufs - TARGET_LUFS).abs() < 1.0, "{fmt:?}: {lufs} LUFS");
+            let secs = got.len() as f64 / ch as f64 / rate as f64;
+            // this MP3 decoder keeps the encoder's delay and padding (players drop them using the
+            // LAME tag): up to four frames more
+            let slack = if fmt == Format::Mp3 { 4.0 * 1152.0 / RATE as f64 } else { 0.03 };
+            assert!(secs > 6.9 - 0.001 && secs < 6.9 + slack, "{fmt:?}: {secs} s");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

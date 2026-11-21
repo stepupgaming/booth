@@ -578,7 +578,7 @@ pub fn export(id: &str, o: &ExportOptions) -> Result<Exported> {
     let stem = file_stem(&job);
     let mut out = Exported { folder: folder.clone(), ..Default::default() };
 
-    // The voiceover, plus a WAV for the Library when the voiceover is an MP3.
+    // The voiceover, plus a WAV for the Library when the voiceover is in another format.
     let mut outs = Vec::new();
     let mut library = None;
     if o.voiceover {
@@ -644,7 +644,7 @@ pub fn export(id: &str, o: &ExportOptions) -> Result<Exported> {
             starred: true,
             path: Default::default(),
         };
-        // The WAV voiceover stays in the export folder; the MP3's helper WAV moves to the Library.
+        // The WAV voiceover stays in the export folder; another format's helper WAV moves to the Library.
         out.take_id = takes::save_file(take, &wav, o.format == Format::Wav).ok().map(|t| t.id);
         if o.format != Format::Wav {
             let _ = std::fs::remove_file(&wav);

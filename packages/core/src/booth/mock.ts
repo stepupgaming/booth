@@ -17,6 +17,8 @@ import type {
 
 const SAMPLE = "/sample-rupert.mp3";
 const SPACES = /\s+/;
+const SLASH = /[\\/]/;
+const AUDIO_FILE = /\.(wav|mp3|m4a|flac|ogg)$/i;
 
 const voice = (
   id: string,
@@ -862,7 +864,7 @@ export function installMock() {
             throw "no such script";
           }
           await wait(500);
-          const ext = p.options.format === "mp3" ? "mp3" : "wav";
+          const ext = p.options.format;
           const folder = `C:\\Users\\you\\Booth\\scripts\\${job.id}\\export`;
           job.exported = {
             folder,
@@ -890,6 +892,23 @@ export function installMock() {
         case "share_files":
           await wait(300);
           return null;
+        case "convert_take":
+          await wait(300);
+          return `/home/you/Booth/exports/${p.name ?? "Booth"}.${p.format}`;
+        case "save_as":
+          await wait(300);
+          return {
+            path: `/home/you/Music/${p.name ?? "Booth"}.${p.format}`,
+            format: p.format,
+          };
+        case "save_to_phone":
+          await wait(300);
+          // Like Android: audio goes to Music/Booth, captions to Download/Booth.
+          return (p.paths as string[]).map((x) => {
+            const name = x.split(SLASH).pop() ?? x;
+            const audio = AUDIO_FILE.test(name);
+            return `${audio ? "Music" : "Download"}/Booth/${name}`;
+          });
         case "engine_stop":
           return true;
         case "reveal":

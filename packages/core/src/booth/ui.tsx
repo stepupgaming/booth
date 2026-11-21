@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import { create } from "zustand";
-import { api as boothApi, errText } from "@workspace/core/booth/api";
+import { type AudioFormat, api as boothApi, errText } from "@workspace/core/booth/api";
 
 // ---------- background and brand ----------
 
@@ -184,6 +184,12 @@ export const Icon = {
   trash: (
     <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" width="15">
       <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+    </svg>
+  ),
+  download: (
+    <svg aria-hidden="true" fill="none" height="15" stroke="currentColor" strokeWidth="1.9" viewBox="0 0 24 24" width="15">
+      <path d="M12 3v12M7 10l5 5 5-5" />
+      <path d="M5 19h14" />
     </svg>
   ),
   folder: (
@@ -752,4 +758,119 @@ export function usePref<T>(key: string, initial: T): [T, (v: T) => void] {
     [key]
   );
   return [v, set];
+}
+
+// ---------- saving audio out of Booth ----------
+
+/** Every format Booth can save audio as, in the order the menus show them. */
+export const SAVE_FORMATS: DropdownOption[] = [
+  { value: "wav", label: "WAV", hint: "best quality, biggest file" },
+  { value: "mp3", label: "MP3", hint: "plays anywhere" },
+  { value: "m4a", label: "M4A (AAC)", hint: "small, for iPhone and editors" },
+  { value: "flac", label: "FLAC", hint: "lossless, about half of WAV" },
+  { value: "ogg", label: "OGG (Opus)", hint: "smallest" },
+];
+const isAudioFormat = (v: unknown): v is AudioFormat => SAVE_FORMATS.some((f) => f.value === v);
+const FORMAT_KEY = "booth.saveFormat";
+
+function readSaveFormat(): AudioFormat {
+  try {
+    // Long-form kept its own choice before every tab shared one.
+    const s = localStorage.getItem(FORMAT_KEY) ?? localStorage.getItem("booth.booth.script.format");
+    const v: unknown = s ? JSON.parse(s) : null;
+    return isAudioFormat(v) ? v : "wav";
+  } catch {
+    return "wav";
+  }
+}
+
+const useSaveFormatStore = create<{ format: AudioFormat | null; setFormat: (f: AudioFormat) => void }>((set) => ({
+  format: null,
+  setFormat: (format) => {
+    set({ format });
+    try {
+      localStorage.setItem(FORMAT_KEY, JSON.stringify(format));
+    } catch {
+      // storage unavailable: keep it for this session only
+    }
+  },
+}));
+
+/** The format audio leaves Booth in. One choice for the Library, Studio and Long-form, remembered. */
+export function useSaveFormat(): [AudioFormat, (f: AudioFormat) => void] {
+  const format = useSaveFormatStore((s) => s.format);
+  const setFormat = useSaveFormatStore((s) => s.setFormat);
+  return [format ?? readSaveFormat(), setFormat];
+}
+
+/** The "Save audio as" menu. */
+export function FormatPicker({ style }: { style?: CSSProperties }) {
+  const [format, setFormat] = useSaveFormat();
+  return (
+    <Dropdown
+      label="Save audio as"
+      onChange={(v) => isAudioFormat(v) && setFormat(v)}
+      options={SAVE_FORMATS}
+      style={style}
+      value={format}
+    />
+  );
+}
+
+/** A file name from a take's words: the first few, so the saved file says what's in it. */
+export const fileNameFor = (text: string, fallback = "Booth") => {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").slice(0, 8).join(" ");
+  return words || fallback;
+};
+
+/**
+ * On a phone: "Save to phone" (Music/Booth, through Android's media store) and "Share" (the share
+ * sheet). `files` makes the files to send, in the chosen format, when a button is pressed.
+ */
+export function PhoneSaveButtons({
+  files,
+  title,
+  disabled,
+  size = "sm",
+  style,
+}: {
+  files: (format: AudioFormat) => Promise<string[]>;
+  title?: string;
+  disabled?: boolean;
+  size?: "sm" | "md";
+  /** Applied to each button, e.g. to make them share a row. */
+  style?: CSSProperties;
+}) {
+  const toast = useToast();
+  const [format] = useSaveFormat();
+  const [busy, setBusy] = useState<"save" | "share" | null>(null);
+  const run = async (what: "save" | "share") => {
+    setBusy(what);
+    try {
+      const paths = await files(format);
+      if (what === "save") {
+        const where = await boothApi.saveToPhone(paths);
+        toast.ok(`Saved to ${where.join(", ")}`);
+      } else {
+        await boothApi.shareFiles(paths, title);
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const cls = `btn ghost${size === "sm" ? " sm" : ""}`;
+  return (
+    <>
+      <button className={cls} disabled={disabled || !!busy} onClick={() => run("save")} style={style} type="button">
+        {busy === "save" ? <span className="spinner" /> : Icon.download}
+        Save to phone
+      </button>
+      <button className={cls} disabled={disabled || !!busy} onClick={() => run("share")} style={style} type="button">
+        {busy === "share" ? <span className="spinner" /> : Icon.share}
+        Share
+      </button>
+    </>
+  );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type AudioFormat,
   api,
   errText,
   fileUrl,
@@ -14,10 +15,13 @@ import { type DragDropEvent, getCurrentWebview } from "@tauri-apps/api/webview";
 import { isPhone, useBooth } from "@workspace/core/booth/store";
 import {
   Dropdown,
+  FormatPicker,
   Icon,
+  PhoneSaveButtons,
   PlayButton,
   playAll,
   usePref,
+  useSaveFormat,
   useToast,
 } from "@workspace/core/booth/ui";
 import {
@@ -169,7 +173,7 @@ export function openInLongForm(text: string) {
 }
 
 const TAGLINE =
-  "Paste or open a whole script. It runs in the background, then export WAV or MP3 with captions.";
+  "Paste or open a whole script. It runs in the background, then export WAV, MP3, M4A, FLAC or OGG with captions.";
 
 // ---------- opening files ----------
 
@@ -724,10 +728,6 @@ const GAPS = [
   { value: "250", label: "Normal · 0.25 s" },
   { value: "400", label: "Relaxed · 0.4 s" },
 ];
-const FORMATS = [
-  { value: "wav", label: "WAV · best quality" },
-  { value: "mp3", label: "MP3 · smaller file" },
-];
 const CAPTION_STYLES = [
   { value: "sentences", label: "Sentences" },
   { value: "short", label: "Short · 2 to 4 words, for Shorts, TikTok, Reels" },
@@ -952,10 +952,7 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
     true
   );
   const [wantLines, setWantLines] = usePref("booth.script.lines", false);
-  const [format, setFormat] = usePref<"wav" | "mp3">(
-    "booth.script.format",
-    "wav"
-  );
+  const [format] = useSaveFormat();
   const [evenLoudness, setEvenLoudness] = usePref(
     "booth.script.evenLoudness",
     false
@@ -1019,20 +1016,21 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
         ? `${plural(failed, "line")} didn’t work`
         : `Stopped · ${done} of ${n} made`;
 
+  /** Phone: export in the chosen format, for Save to phone or Share. */
+  const phoneFiles = async (f: AudioFormat) => {
+    const out = await api.scriptExport(job.id, { ...options, format: f });
+    return [out.voiceover, out.captions, out.vtt].filter(
+      (p): p is string => !!p
+    );
+  };
+
   const exportNow = async () => {
     setExporting(true);
     try {
       const out = await api.scriptExport(job.id, options);
-      if (phone) {
-        const files = [out.voiceover, out.captions, out.vtt].filter(
-          (p): p is string => !!p
-        );
-        await api.shareFiles(files, job.title);
-      } else {
-        toast.ok(
-          `Saved ${andList([out.voiceover && "the voiceover", out.captions && "captions", out.lines.length && "each line"])}`
-        );
-      }
+      toast.ok(
+        `Saved ${andList([out.voiceover && "the voiceover", out.captions && "captions", out.lines.length && "each line"])}`
+      );
     } catch (e) {
       toast.bad(errText(e));
     } finally {
@@ -1106,12 +1104,7 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <span className="faint small">Save audio as</span>
-        <Dropdown
-          label="Save audio as"
-          onChange={(v) => setFormat(v as "wav" | "mp3")}
-          options={FORMATS}
-          value={format}
-        />
+        <FormatPicker />
         {wantCaptions ? (
           <>
             <span className="faint small">Caption style</span>
@@ -1164,22 +1157,35 @@ function JobView({ job, onNew }: { job: ScriptJob; onNew: () => void }) {
           </pre>
         </div>
       ) : null}
-      <button
-        className="btn primary"
-        disabled={!allDone || exporting || nothingPicked}
-        onClick={exportNow}
-        style={{ justifyContent: "center", width: "100%" }}
-        type="button"
-      >
-        {exporting ? <span className="spinner" /> : phone ? Icon.share : null}
-        {allDone
-          ? phone
-            ? "Share"
-            : "Export"
-          : phone
-            ? "Share when ready"
-            : `Export when all ${plural(n, "line")} are made`}
-      </button>
+      {phone ? (
+        <>
+          <div style={{ display: "flex", gap: 8 }}>
+            <PhoneSaveButtons
+              disabled={!allDone || nothingPicked}
+              files={phoneFiles}
+              size="md"
+              style={{ flex: 1, justifyContent: "center" }}
+              title={job.title}
+            />
+          </div>
+          {allDone ? null : (
+            <span className="faint small">
+              Ready when all {plural(n, "line")} are made
+            </span>
+          )}
+        </>
+      ) : (
+        <button
+          className="btn primary"
+          disabled={!allDone || exporting || nothingPicked}
+          onClick={exportNow}
+          style={{ justifyContent: "center", width: "100%" }}
+          type="button"
+        >
+          {exporting ? <span className="spinner" /> : null}
+          {allDone ? "Export" : `Export when all ${plural(n, "line")} are made`}
+        </button>
+      )}
       {exported && !phone ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div className="muted small" style={{ lineHeight: 1.5 }}>

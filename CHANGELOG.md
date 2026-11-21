@@ -10,6 +10,21 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.5.6 (2026-11-20)
+
+- **Save audio as WAV, MP3, M4A (AAC), FLAC or OGG (Opus).** One "Save audio as" menu picks the
+  format for the Library, Studio's Export and Long-form's export, and Booth remembers it. It works
+  the same on Windows, Mac, Linux and Android, with nothing else to install. "Even out loudness"
+  in Long-form works with every format.
+- **Phones: Save to phone and Share on every take.** In the Library, each take has Save to phone,
+  which puts it in Music/Booth where your music, video and editing apps can find it, and Share,
+  which opens the share sheet. Both use the format you picked. Studio's Export and Long-form's
+  export have the same two buttons when they finish. Captions go to Download/Booth. Save to phone
+  needs Android 10 or later; on older phones, use Share.
+- **Computers: Save as… in the Library.** Each take has Save as… next to Show in folder. Pick
+  where it goes and which format in your system's save window. Studio's Export has a format menu
+  next to it and opens the folder with the file when it's done.
+
 ## 0.5.5 (2026-11-19)
 
 - **Fixed on Mac: "the voice engine stopped while loading" with "Insufficient Memory".** On a Mac

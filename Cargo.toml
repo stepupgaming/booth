@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["apps/native/src-tauri", "crates/booth-core", "crates/booth-decode", "crates/booth-mcp"]
+# Vendored with Booth's speed fixes; see third_party/oxideav-aac/BOOTH-PATCHES.md.
+exclude = ["third_party/oxideav-aac"]
 
 [workspace.package]
 version = "0.2.0"
@@ -27,4 +29,13 @@ strip = true
 opt-level = 3
 
 [profile.dev.package.ebur128]
+opt-level = 3
+
+[profile.dev.package.oxideav-aac]
+opt-level = 3
+
+[profile.dev.package.opus-pure]
+opt-level = 3
+
+[profile.dev.package.flacenc]
 opt-level = 3

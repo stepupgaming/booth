@@ -4,7 +4,20 @@ import { useMemo, useRef, useState } from "react";
 import { api, canExact, canShape, errText, fileUrl, LANGUAGE_GROUPS, type Mode, type Take, voiceDesc } from "@workspace/core/booth/api";
 import { openInLongForm } from "@workspace/core/booth/script";
 import { controlById, currentVoice, isPhone, packPresent, round2, toDose, useBooth, useLanguage } from "@workspace/core/booth/store";
-import { DoseSlider, Dropdown, Icon, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
+import {
+  DoseSlider,
+  Dropdown,
+  FormatPicker,
+  Icon,
+  Orb,
+  PhoneSaveButtons,
+  PlayButton,
+  playAll,
+  usePref,
+  useSaveFormat,
+  useToast,
+  Wave,
+} from "@workspace/core/booth/ui";
 
 interface Line {
   id: string;
@@ -144,6 +157,13 @@ const firstLines: Line[] = [
   { id: "b", text: "But here we are, and the whole team is waiting outside.", takes: [], kept: null },
 ];
 
+/** A Studio export's file name: the voice and the local time, e.g. "Rupert 2026-11-20 14.05.09". */
+const exportName = (t: Take) => {
+  const d = new Date(t.created_at);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${t.voice_name} ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}`;
+};
+
 export function Studio() {
   const toast = useToast();
   const catalog = useBooth((s) => s.catalog);
@@ -161,6 +181,10 @@ export function Studio() {
   const [modePref, setMode] = usePref<Mode>("mode", "exact");
   const [sound, setSound] = usePref<Sound>("sound", NEW_SOUND);
   const [perLineRaw, setPerLine] = usePref("takesPerLine", 3);
+  const [saveFormat] = useSaveFormat();
+  const [exporting, setExporting] = useState(false);
+  // On a phone the finished export waits here for Save to phone or Share.
+  const [exported, setExported] = useState<Take | null>(null);
   const perLine = Math.min(MAX_TAKES, Math.max(1, Math.round(perLineRaw) || 3));
   // Delivery and Shape the voice start closed on phones, so the script and takes stay near the top.
   const [deliveryOpen, setDeliveryOpen] = usePref("fold.delivery", !phone);
@@ -315,6 +339,7 @@ export function Studio() {
   const keptList = lines.map(keptTake).filter((t): t is Take => !!t);
 
   const exportAll = async () => {
+    setExporting(true);
     try {
       const t = await api.exportTakes(
         keptList.map((t) => t.id),
@@ -322,13 +347,20 @@ export function Studio() {
       );
       // An export is saved straight away, so it is waiting in the Library.
       if (phone) {
-        toast.ok(`Exported ${t.seconds.toFixed(1)} s · it’s in your Library`);
+        setExported(t);
       } else {
-        toast.ok(`Exported ${t.seconds.toFixed(1)} s to ${t.path}`);
-        api.reveal(t.path).catch(() => undefined);
+        // The Library keeps the WAV; any other format is a copy next to Booth's other exports.
+        const out =
+          saveFormat === "wav"
+            ? t.path
+            : await api.convertTake(t.path, saveFormat, exportName(t));
+        toast.ok(`Exported ${t.seconds.toFixed(1)} s to ${out}`);
+        api.reveal(out).catch(() => undefined);
       }
     } catch (e) {
       toast.bad(errText(e));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -547,9 +579,13 @@ export function Studio() {
             >
               Play all
             </button>
-            <button className="btn ghost" disabled={keptList.length === 0 || !!running} onClick={exportAll} type="button">
-              Export
-            </button>
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button className="btn ghost" disabled={keptList.length === 0 || !!running || exporting} onClick={exportAll} type="button">
+                {exporting ? <span className="spinner" /> : null}
+                Export
+              </button>
+              <FormatPicker style={{ minWidth: 110 }} />
+            </span>
             <button
               className="btn ghost"
               disabled={!!running}
@@ -599,6 +635,20 @@ export function Studio() {
               </div>
             )}
           </div>
+          {phone && exported ? (
+            <div className="muted small" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ flex: "1 1 100%" }}>Exported {exported.seconds.toFixed(1)} s. It’s in your Library too.</span>
+              <PhoneSaveButtons
+                files={async (f) => [
+                  await api.convertTake(exported.path, f, exportName(exported)),
+                ]}
+                title={exported.voice_name}
+              />
+              <button className="btn ghost sm" onClick={() => setExported(null)} type="button">
+                Done
+              </button>
+            </div>
+          ) : null}
           {longHint && !running && written(lines) > LONG_PASTE ? (
             <div className="muted small" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span>Long script? Long-form runs it in the background.</span>

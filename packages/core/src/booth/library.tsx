@@ -3,7 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errText, fileUrl, type Take, type Voice } from "@workspace/core/booth/api";
 import { isPhone, useBooth } from "@workspace/core/booth/store";
-import { Icon, Orb, PlayButton, playAll, usePref, useToast, Wave } from "@workspace/core/booth/ui";
+import {
+  FormatPicker,
+  fileNameFor,
+  Icon,
+  Orb,
+  PhoneSaveButtons,
+  PlayButton,
+  playAll,
+  usePref,
+  useSaveFormat,
+  useToast,
+  Wave,
+} from "@workspace/core/booth/ui";
 
 /**
  * A shelf is one group of takes in the Library. Today there is one shelf per voice (plus one for
@@ -52,6 +64,33 @@ const when = (iso: string) => {
 };
 const count = (n: number, saved: boolean) => `${n} ${saved ? "saved " : ""}take${n === 1 ? "" : "s"}`;
 
+/** On a computer: the system's save window, with the remembered format first. */
+function SaveAsButton({ path, name }: { path: string; name: string }) {
+  const toast = useToast();
+  const [format, setFormat] = useSaveFormat();
+  const [saving, setSaving] = useState(false);
+  const saveAs = async () => {
+    setSaving(true);
+    try {
+      const out = await api.saveAs(path, format, name);
+      if (out) {
+        setFormat(out.format);
+        toast.ok(`Saved to ${out.path}`);
+      }
+    } catch (e) {
+      toast.bad(errText(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <button className="btn ghost sm" disabled={saving} onClick={saveAs} title="Save a copy as WAV, MP3, M4A, FLAC or OGG" type="button">
+      {saving ? <span className="spinner" /> : Icon.download}
+      Save as…
+    </button>
+  );
+}
+
 function TakeRow({
   t,
   phone,
@@ -66,6 +105,10 @@ function TakeRow({
   const toast = useToast();
   const [confirmDel, setConfirmDel] = useState(false);
   const src = fileUrl(t.path);
+  const name = fileNameFor(t.text, t.voice_name);
+  const starWord = t.starred ? "Saved" : "Save";
+  const starHint = t.starred ? "Saved take" : "Keep with the saved takes";
+  const starClass = t.starred ? "btn sm saved" : "btn sm ghost";
   const toggle = async () => {
     try {
       onSaved(await api.starTake(t.id, !t.starred));
@@ -99,17 +142,22 @@ function TakeRow({
         </span>
       </div>
       <Wave height={30} seed={t.seed ?? 7} src={src} />
-      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-        {phone ? null : (
-          <button
-            aria-label="Show the file in its folder"
-            className="btn ghost sm icon-btn"
-            onClick={() => api.reveal(t.path).catch((e) => toast.bad(errText(e)))}
-            title="Show in folder"
-            type="button"
-          >
-            {Icon.folder}
-          </button>
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        {phone ? (
+          <PhoneSaveButtons files={async (f) => [await api.convertTake(t.path, f, name)]} title={name} />
+        ) : (
+          <>
+            <button
+              aria-label="Show the file in its folder"
+              className="btn ghost sm icon-btn"
+              onClick={() => api.reveal(t.path).catch((e) => toast.bad(errText(e)))}
+              title="Show in folder"
+              type="button"
+            >
+              {Icon.folder}
+            </button>
+            <SaveAsButton name={name} path={t.path} />
+          </>
         )}
         <button
           aria-label={confirmDel ? "Really delete this take?" : "Delete this take"}
@@ -122,15 +170,17 @@ function TakeRow({
         >
           {confirmDel ? "Delete?" : Icon.trash}
         </button>
+        {/* On a phone the bookmark goes without a word, so it isn't confused with Save to phone. */}
         <button
+          aria-label={phone ? starHint : undefined}
           aria-pressed={t.starred}
-          className={`btn sm ${t.starred ? "saved" : "ghost"}`}
+          className={phone ? `${starClass} icon-btn` : starClass}
           onClick={toggle}
           title={t.starred ? "Take it out of the saved takes" : "Keep it with the saved takes"}
           type="button"
         >
           {t.starred ? Icon.savedOn : Icon.save}
-          {t.starred ? "Saved" : "Save"}
+          {phone ? null : starWord}
         </button>
       </div>
     </div>
@@ -190,6 +240,10 @@ export function Library() {
     <div className="glass" style={{ padding: "20px 22px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       <h1 className="h1">Library</h1>
       <div style={{ flex: 1 }} />
+      <span className="faint small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        Save audio as
+        <FormatPicker style={{ minWidth: 150 }} />
+      </span>
       <div aria-label="Which takes" className="seg" role="tablist">
         <button aria-selected={show === "saved"} onClick={() => setShow("saved")} role="tab" type="button">
           Saved · {savedCount}

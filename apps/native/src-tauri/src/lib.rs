@@ -12,6 +12,7 @@ use booth_core::models::{self, Pack};
 use booth_core::studio::{self, SpeakOptions};
 use booth_core::takes::{self, ScriptLine, Take};
 use booth_core::voices::{self, Consent, Voice};
+use booth_core::audio::{self, Format};
 use booth_core::{paths, settings, SpeakerMode, Zonos};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -652,6 +653,131 @@ async fn script_export(id: String, options: Option<ExportOptions>) -> Res<Export
         .map_err(err_chain)
 }
 
+/// Where a take is written in another format before it leaves Booth: Studio's Export on a
+/// computer, and the share sheet or Save to phone on a phone (which copy it out of here).
+fn exports_dir() -> PathBuf {
+    paths::home().join("exports")
+}
+
+/// A plain file name from a take's words ("Cold phones are the worst"), at most 60 characters.
+fn take_file_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        // "didn't" stays one word: apostrophes go, other punctuation becomes a space.
+        .filter(|c| !matches!(c, '\'' | '\u{2019}'))
+        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let s: String = s.chars().take(60).collect::<String>().trim_end().to_string();
+    if s.is_empty() { "Booth".into() } else { s }
+}
+
+fn booth_audio(path: &std::path::Path) -> Res<()> {
+    if !path.starts_with(paths::home()) || !path.is_file() {
+        return Err(format!("{} is not one of Booth's takes", path.display()));
+    }
+    Ok(())
+}
+
+/// Write a take (a WAV in Booth's folder) as `format`, named after `name`, into the exports
+/// folder. On a phone the folder only holds the latest one: the share sheet and Save to phone copy
+/// it out straight away.
+#[tauri::command]
+async fn convert_take(path: PathBuf, format: Format, name: Option<String>, even: Option<bool>) -> Res<PathBuf> {
+    booth_audio(&path)?;
+    let dir = exports_dir();
+    #[cfg(mobile)]
+    let _ = std::fs::remove_dir_all(&dir);
+    paths::ensure_dir(&dir).map_err(err)?;
+    let stem = take_file_name(name.as_deref().unwrap_or("Booth"));
+    let dst = dir.join(format!("{stem}.{}", format.ext()));
+    let src = path.clone();
+    let out = dst.clone();
+    tokio::task::spawn_blocking(move || audio::convert(&src, &out, format, even.unwrap_or(false)))
+        .await
+        .map_err(err)?
+        .map_err(err_chain)?;
+    Ok(dst)
+}
+
+#[derive(Serialize)]
+struct SavedAs {
+    path: PathBuf,
+    format: Format,
+}
+
+/// The Library's "Save as…" on a computer: the system's save dialog, with the remembered format
+/// first. The file type picked in the dialog (or the extension typed) decides the format. `None`
+/// when the dialog is cancelled.
+#[tauri::command]
+async fn save_as(app: AppHandle, path: PathBuf, format: Format, name: Option<String>) -> Res<Option<SavedAs>> {
+    booth_audio(&path)?;
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_dialog::DialogExt;
+        let label = |f: Format| match f {
+            Format::Wav => "WAV",
+            Format::Mp3 => "MP3",
+            Format::M4a => "M4A (AAC)",
+            Format::Flac => "FLAC",
+            Format::Ogg => "OGG (Opus)",
+        };
+        let stem = take_file_name(name.as_deref().unwrap_or("Booth"));
+        let mut dialog = app.dialog().file().set_title("Save as").set_file_name(format!("{stem}.{}", format.ext()));
+        let order = std::iter::once(format).chain(Format::ALL.into_iter().filter(|f| *f != format));
+        for f in order {
+            dialog = dialog.add_filter(label(f), &[f.ext()]);
+        }
+        if let Ok(dir) = app.path().audio_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+        let picked = tokio::task::spawn_blocking(move || dialog.blocking_save_file()).await.map_err(err)?;
+        let Some(picked) = picked else { return Ok(None) };
+        let mut dst = picked.into_path().map_err(err)?;
+        let chosen = match dst.extension().and_then(|e| e.to_str()).and_then(Format::from_ext) {
+            Some(f) => f,
+            None => {
+                let mut name = dst.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+                name.push(format!(".{}", format.ext()));
+                dst.set_file_name(name);
+                format
+            }
+        };
+        let (src, out) = (path.clone(), dst.clone());
+        tokio::task::spawn_blocking(move || audio::convert(&src, &out, chosen, false))
+            .await
+            .map_err(err)?
+            .map_err(err_chain)?;
+        Ok(Some(SavedAs { path: dst, format: chosen }))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, format, name);
+        Err("on a phone, use Save to phone or Share".into())
+    }
+}
+
+/// Android: copy files into the phone's shared storage, audio to Music/Booth and captions to
+/// Download/Booth, where the Files app, music players and video editors find them. Returns where
+/// each one went ("Music/Booth/Cold phones.m4a").
+#[tauri::command]
+async fn save_to_phone(paths: Vec<PathBuf>) -> Res<Vec<String>> {
+    let home = paths::home();
+    if paths.is_empty() || paths.iter().any(|p| !p.starts_with(&home) || !p.is_file()) {
+        return Err("only Booth's own files can be saved".into());
+    }
+    #[cfg(target_os = "android")]
+    {
+        paths.iter().map(|p| android_work::save_to_phone(p)).collect()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("Save to phone works on Android; on a computer, use Save as…".into())
+    }
+}
+
 /// Hand files to another app: Android's share sheet. (Desktop shows them in the folder instead.)
 #[tauri::command]
 async fn share_files(paths: Vec<PathBuf>, title: Option<String>) -> Res<()> {
@@ -1030,6 +1156,30 @@ mod android_work {
         })
     }
 
+    /// Copies a file into shared storage through MediaStore (Share.save); returns where it went.
+    pub fn save_to_phone(path: &std::path::Path) -> Result<String, String> {
+        let mut out = String::new();
+        with_class("com.nofacetube.booth.Share", |env, class, context| {
+            let p = env.new_string(path.to_string_lossy())?;
+            let r = env
+                .call_static_method(
+                    class,
+                    "save",
+                    "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                    &[JValue::Object(context), JValue::Object(&p)],
+                )?
+                .l()?;
+            out = env.get_string(&jni::objects::JString::from(r))?.into();
+            Ok(())
+        })?;
+        // Share.save answers "ok:<where>" or "error:<why>", so the reason reaches the toast.
+        match out.split_once(':') {
+            Some(("ok", place)) => Ok(place.to_string()),
+            Some(("error", why)) => Err(why.to_string()),
+            _ => Err(format!("Save to phone: unexpected answer {out:?}")),
+        }
+    }
+
     /// Runs `f` with one of the app's own Kotlin classes and the application context.
     fn with_class(
         name: &str,
@@ -1063,7 +1213,7 @@ mod android_work {
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_dialog::init());
     builder
         .setup(|app| {
             #[cfg(target_os = "android")]
@@ -1137,6 +1287,9 @@ pub fn run() {
             script_captions,
             script_export,
             share_files,
+            convert_take,
+            save_as,
+            save_to_phone,
             list_takes,
             star_take,
             delete_take,

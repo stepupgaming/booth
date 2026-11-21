@@ -1,0 +1,23 @@
+# oxideav-aac 0.1.7 from crates.io (https://github.com/OxideAV/oxideav-aac, MIT), with two speed
+# fixes for Booth's M4A export. See BOOTH-PATCHES.md. Only the library is kept here; the upstream
+# test suite lives in the crate's own repository.
+[package]
+edition = "2021"
+rust-version = "1.80"
+name = "oxideav-aac"
+version = "0.1.7"
+authors = ["Mark Karpeles"]
+description = "Pure-Rust AAC-LC decoder and encoder for oxideav (vendored with Booth's speed fixes)"
+license = "MIT"
+repository = "https://github.com/OxideAV/oxideav-aac"
+publish = false
+autotests = false
+autobenches = false
+autoexamples = false
+
+[lib]
+name = "oxideav_aac"
+path = "src/lib.rs"
+
+[dependencies]
+oxideav-core = "0.1"
