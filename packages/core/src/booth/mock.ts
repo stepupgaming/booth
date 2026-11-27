@@ -207,7 +207,7 @@ let settings: Settings = {
   decoder: "keep2_plain",
   mcp_allow_cloning: false,
   keep_engine_running: false,
-  laci: false,
+  laci: true,
   device: "auto",
   language: null,
   pronunciations: [

@@ -82,6 +82,9 @@ pub struct Audio {
     pub wav: Vec<u8>,
     pub seed: Option<u64>,
     pub decoder: Option<String>,
+    /// No try came out whole: the kept take is too short for its text or ends chopped mid-word,
+    /// so it may stop before the text is done (see [`Zonos::generate`]).
+    pub cut_off: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,40 +284,50 @@ impl Zonos {
 
     /// Synthesize a whole take as a WAV file.
     ///
-    /// The model sometimes predicts the end of speech while the last sound is still going, so the
-    /// take stops mid-word (about half of Exact takes in a 2026-11-18 test on ZONOS3 96d9e0e, with
-    /// LACI on or off; Shapeable takes rarely). Such a take is made again with a fresh seed, up to
-    /// [`CUT_RETRIES`] times (up to [`HARD_CUT_RETRIES`] while it still ends loud), and the one
-    /// that ends most cleanly is kept. If every try ends
-    /// mid-sound, the kept one gets a short fade so it doesn't click. The kept take's own seed is
-    /// returned, so asking for that seed again gives the same take.
+    /// The model sometimes stops a take before the text is done: it predicts the end of speech
+    /// while the last sound is still going, so the take stops mid-word (about half of Exact takes
+    /// in a 2026-11-18 test on ZONOS3 96d9e0e, with LACI on or off; Shapeable takes rarely), or it
+    /// ends cleanly after the first sentence or with words left out, so the take is far too short
+    /// for its text (see [`crate::takes::too_short`]). Such a take is made again with a fresh seed,
+    /// up to [`CUT_RETRIES`] times (up to [`HARD_CUT_RETRIES`] while it still ends loud or is too
+    /// short), and the best try is kept: one with all its words first, then the quietest ending.
+    /// If every try ends mid-sound, the kept one gets a short fade so it doesn't click; if the kept
+    /// one is still too short or chopped mid-word, [`Audio::cut_off`] says so. The kept take's own
+    /// seed is returned, so asking for that seed again gives the same take. That holds for a
+    /// pinned seed too: a take with that seed that stops early is redone like any other.
     pub async fn generate(&self, req: &GenerateRequest) -> Result<Audio> {
         let first = self.generate_fallback(req).await?;
-        let Some(db) = crate::takes::ending_db(&first.wav) else { return Ok(first) };
-        let mut best = (db, first);
+        let Some(end) = crate::takes::ending(&req.text, &first.wav) else { return Ok(first) };
+        let mut best = (end, first);
         let mut redone = 0;
         // On the processor an Exact take can take a minute or more, so one redo at most there.
         let slow = crate::engine::on_processor();
         loop {
             let limit = if slow {
                 1
-            } else if best.0 > crate::takes::HARD_CUT_DB {
+            } else if best.0.short || best.0.db > crate::takes::HARD_CUT_DB {
                 HARD_CUT_RETRIES
             } else {
                 CUT_RETRIES
             };
-            if best.0 <= crate::takes::CUT_DB || redone >= limit {
+            if best.0.clean() || redone >= limit {
                 break;
             }
             redone += 1;
-            crate::diag::note(format!("take ends mid-sound ({:.0} dB), redoing ({redone}/{limit})", best.0));
+            let why = if best.0.short {
+                "is too short for its text".to_string()
+            } else {
+                format!("ends mid-sound ({:.0} dB)", best.0.db)
+            };
+            crate::diag::note(format!("take {why}, redoing ({redone}/{limit})"));
             let mut again = req.clone();
             again.seed = Some(fresh_seed());
             match self.generate_fallback(&again).await {
                 Ok(a) => {
-                    let db = crate::takes::ending_db(&a.wav).unwrap_or(0.0);
-                    if db < best.0 {
-                        best = (db, a);
+                    let unreadable = crate::takes::Ending { db: 0.0, short: true };
+                    let end = crate::takes::ending(&req.text, &a.wav).unwrap_or(unreadable);
+                    if end.better_than(&best.0) {
+                        best = (end, a);
                     }
                 }
                 Err(e) => {
@@ -323,11 +336,17 @@ impl Zonos {
                 }
             }
         }
-        let (db, mut audio) = best;
-        if db > crate::takes::CUT_DB {
+        let (end, mut audio) = best;
+        if end.db > crate::takes::CUT_DB {
             crate::diag::note(format!("every try ended mid-sound; fading the last {CUT_FADE_MS} ms"));
             audio.wav = crate::takes::fade_out(&audio.wav, CUT_FADE_MS)?;
         }
+        if end.short {
+            crate::diag::note("every try was too short for its text; keeping the longest-sounding one");
+        }
+        // A take that only ends a little loud is a breath or a tail the fade hides (its words were
+        // all there in a 2026-11-27 check); one that is too short or still chopped is marked.
+        audio.cut_off = end.short || end.db > crate::takes::HARD_CUT_DB;
         Ok(audio)
     }
 
@@ -337,10 +356,16 @@ impl Zonos {
     /// - the take failed inside the engine (HTTP 500): it is tried again, and if that fails too
     ///   the engine restarts and it is tried once more (a Mac out of graphics memory needs that);
     /// - the take asked for a decoder the engine didn't load: the engine restarts with it, or the
-    ///   take uses the engine's own decoder when a restart wouldn't load the one asked for.
+    ///   take uses the engine's own decoder when a restart wouldn't load the one asked for;
+    /// - the engine can't guard this take against skips (no LACI heads for its language, or an
+    ///   engine started without them): the take is made without the guard.
     async fn generate_fallback(&self, req: &GenerateRequest) -> Result<Audio> {
         let generation = crate::engine::fallback_generation();
         match self.generate_once(req).await {
+            Err(e) if e.downcast_ref::<LaciUnavailable>().is_some() => {
+                crate::diag::note("the engine can't guard this take against skips; making it without the guard");
+                Box::pin(self.generate_fallback(&GenerateRequest { laci: None, ..req.clone() })).await
+            }
             Err(e) if e.downcast_ref::<ReferenceEncodeFailed>().is_some() => {
                 match crate::engine::processor_fallback(&self.base, generation).await {
                     Some(z) => z.generate_once(req).await,
@@ -430,6 +455,10 @@ impl Zonos {
                 crate::diag::note(format!("engine said: {}", msg.trim()));
                 return Err(EngineFailed.into());
             }
+            if status.as_u16() == 400 && req.laci == Some(true) && msg.contains(LACI_REFUSED) {
+                crate::diag::note(format!("engine said: {}", msg.trim()));
+                return Err(LaciUnavailable.into());
+            }
             if status.as_u16() == 400 && msg.contains(UNKNOWN_DECODER) {
                 crate::diag::note(format!("engine said: {}", msg.trim()));
                 return Err(UnknownDecoder.into());
@@ -440,7 +469,7 @@ impl Zonos {
         let seed = header("x-seed").and_then(|s| s.parse().ok());
         let decoder = header("x-decoder");
         let wav = r.bytes().await?.to_vec();
-        Ok(Audio { wav, seed, decoder })
+        Ok(Audio { wav, seed, decoder, cut_off: false })
     }
 }
 
@@ -536,6 +565,22 @@ impl std::fmt::Display for UnknownDecoder {
 }
 
 impl std::error::Error for UnknownDecoder {}
+
+/// In each of the engine's refusals (HTTP 400) of a take that asks for LACI: the engine was started
+/// without heads, has none for the take's language, or the take uses CFG.
+const LACI_REFUSED: &str = "LACI";
+
+/// The engine can't guard this take against skips (see [`LACI_REFUSED`]).
+#[derive(Debug)]
+pub struct LaciUnavailable;
+
+impl std::fmt::Display for LaciUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the voice engine can't guard this take against skips")
+    }
+}
+
+impl std::error::Error for LaciUnavailable {}
 
 fn friendly_error(status: u16, body: &str) -> String {
     let detail = serde_json::from_str::<Value>(body)

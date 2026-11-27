@@ -434,8 +434,10 @@ async fn export_takes(ids: Vec<String>, gap_ms: Option<u32>) -> Res<Take> {
     let mut wavs = Vec::new();
     let mut parts = Vec::new();
     let mut names: Vec<String> = Vec::new();
+    let mut cut_off = false;
     for id in &ids {
         let t = takes::find(id).ok_or_else(|| format!("no take {id}"))?;
+        cut_off |= t.cut_off;
         wavs.push(std::fs::read(&t.path).map_err(err)?);
         parts.push(ScriptLine { voice: t.voice_name.clone(), text: t.text.clone() });
         if !names.contains(&t.voice_name) {
@@ -463,6 +465,7 @@ async fn export_takes(ids: Vec<String>, gap_ms: Option<u32>) -> Res<Take> {
         voice_match: None,
         redone: 0,
         drifted: false,
+        cut_off,
         starred: true,
         path: Default::default(),
     };

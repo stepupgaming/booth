@@ -126,6 +126,7 @@ pub async fn speak_audio(z: &Zonos, text: &str, opts: &SpeakOptions) -> Result<(
         voice_match: verdict.map(|v| (v.voice_match * 1000.0).round() / 1000.0),
         redone: verdict.map_or(0, |v| v.redone),
         drifted: verdict.is_some_and(|v| v.drifted),
+        cut_off: audio.cut_off,
         starred: false,
         path: Default::default(),
     };
@@ -141,6 +142,7 @@ pub async fn render_script(z: &Zonos, lines: &[ScriptLine], gap_ms: u32, via: &s
     let s = settings::load();
     let mut wavs = Vec::new();
     let mut names = Vec::new();
+    let mut cut_off = false;
     for line in lines {
         let voice = pick_voice(z, Some(&line.voice)).await?;
         let mut req = GenerateRequest {
@@ -151,7 +153,9 @@ pub async fn render_script(z: &Zonos, lines: &[ScriptLine], gap_ms: u32, via: &s
             ..Default::default()
         };
         voice.apply(&mut req, None)?;
-        wavs.push(z.generate(&req).await?.wav);
+        let audio = z.generate(&req).await?;
+        cut_off |= audio.cut_off;
+        wavs.push(audio.wav);
         if !names.contains(&voice.name) {
             names.push(voice.name.clone());
         }
@@ -175,6 +179,7 @@ pub async fn render_script(z: &Zonos, lines: &[ScriptLine], gap_ms: u32, via: &s
         voice_match: None,
         redone: 0,
         drifted: false,
+        cut_off,
         starred: false,
         path: Default::default(),
     };

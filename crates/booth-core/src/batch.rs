@@ -58,6 +58,9 @@ pub struct JobLine {
     pub voice_match: Option<f64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub drifted: bool,
+    /// The line's take may stop before its text is done (see `Take::cut_off`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cut_off: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// The line's audio, once made.
@@ -340,6 +343,7 @@ pub async fn create(z: &Zonos, source: &str, voices: &BTreeMap<String, String>, 
             version: 0,
             voice_match: None,
             drifted: false,
+            cut_off: false,
             error: None,
             path: None,
         })
@@ -495,6 +499,7 @@ pub async fn run(z: &Zonos, id: &str, on_change: impl Fn(&Job)) -> Result<Job> {
                     l.seed = take.seed;
                     l.voice_match = take.voice_match;
                     l.drifted = take.drifted;
+                    l.cut_off = take.cut_off;
                     l.path = Some(path.clone());
                     l.version = version;
                     l.error = None;
@@ -641,6 +646,7 @@ pub fn export(id: &str, o: &ExportOptions) -> Result<Exported> {
             voice_match: None,
             redone: 0,
             drifted: false,
+            cut_off: job.lines.iter().any(|l| l.cut_off),
             starred: true,
             path: Default::default(),
         };
@@ -718,6 +724,7 @@ mod tests {
                     version: 1,
                     voice_match: None,
                     drifted: false,
+                    cut_off: false,
                     error: None,
                     path: Some(path),
                 }
@@ -831,6 +838,7 @@ Warm it up,
                 version: 1,
                 voice_match: None,
                 drifted: false,
+                cut_off: false,
                 error: None,
                 path: Some(path),
             });

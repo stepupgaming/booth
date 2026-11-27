@@ -678,7 +678,16 @@ export function Studio() {
                       >
                         {t.seconds.toFixed(1)} s · seed {t.seed ?? "?"}
                       </span>
-                      {t.drifted || t.redone ? (
+                      {t.cut_off ? (
+                        <span
+                          className="warn"
+                          style={{ fontSize: 11 }}
+                          title="Every try of this take stopped before the text was done: mid-word, or with words left out. Listen to it, or make it again. Rewording the line or splitting it in two often helps."
+                        >
+                          May be cut off
+                        </span>
+                      ) : null}
+                      {!t.cut_off && (t.drifted || t.redone) ? (
                         <span
                           className={t.drifted ? "warn" : "faint"}
                           style={{ fontSize: 11 }}

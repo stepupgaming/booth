@@ -64,6 +64,7 @@ fn job(n: usize) -> String {
                 version: 1,
                 voice_match: None,
                 drifted: false,
+                cut_off: false,
                 error: None,
                 path: Some(path),
             }

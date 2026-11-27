@@ -206,7 +206,8 @@ pub async fn keep_closest(
             }
         };
         match score(z, target, &next.wav).await {
-            Ok(s) if s > best.1 => best = (next, s),
+            // A closer voice doesn't make up for a take that stops before its text is done.
+            Ok(s) if s > best.1 && (best.0.cut_off || !next.cut_off) => best = (next, s),
             Ok(_) => {}
             Err(e) => {
                 crate::diag::note(format!("drift check: couldn't score a redo: {e:#}"));

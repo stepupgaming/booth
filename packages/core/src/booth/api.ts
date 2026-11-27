@@ -78,6 +78,8 @@ export interface ScriptJobLine {
   version: number;
   voice_match?: number | null;
   drifted?: boolean;
+  /** The line's take may stop before its text is done. */
+  cut_off?: boolean;
   error?: string | null;
   path: string | null;
 }
@@ -228,6 +230,8 @@ export interface Take {
   redone?: number;
   /** Still unlike the voice after the retries; this was the closest try. */
   drifted?: boolean;
+  /** Every try stopped before the text was done (mid-word, or words left out); this was the best one. */
+  cut_off?: boolean;
   starred: boolean;
   path: string;
 }

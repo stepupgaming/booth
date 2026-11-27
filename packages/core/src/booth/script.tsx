@@ -753,6 +753,7 @@ const sameRow = (
   a.line.path === b.line.path &&
   a.line.error === b.line.error &&
   a.line.drifted === b.line.drifted &&
+  a.line.cut_off === b.line.cut_off &&
   a.line.speaker === b.line.speaker &&
   a.line.voice_name === b.line.voice_name &&
   a.line.para === b.line.para &&
@@ -839,6 +840,15 @@ const LineRow = memo(function LineRow({
               {line.voice_name}
               {line.drifted ? (
                 <span className="warn"> · may not sound like the voice</span>
+              ) : null}
+              {line.cut_off ? (
+                <span
+                  className="warn"
+                  title="Every try of this line stopped before the text was done. Listen to it, or make it again."
+                >
+                  {" "}
+                  · may be cut off
+                </span>
               ) : null}
             </span>
           )}

@@ -78,6 +78,14 @@ jobs:
           python -I scripts/smoke-release.py --mcp $mcp.FullName --models "${{ runner.temp }}/booth-models" --decoder-check
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # The lines that once came back cut off (scripts/cutoff-check.py), one seed on the processor.
+      - name: Windows, cutoff check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -I scripts/cutoff-check.py --mcp "$env:INSTALL_DIR/booth-mcp.exe" --models "${{ runner.temp }}/booth-models" --seeds 1 --pace 0
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Windows, Claude Desktop bundle
         if: runner.os == 'Windows'
         shell: pwsh
@@ -106,6 +114,7 @@ jobs:
           mcp=$(find dl/squashfs-root -type f -name booth-mcp | head -1)
           [ -n "$mcp" ] || { find dl/squashfs-root -maxdepth 4; exit 1; }
           python3 -I scripts/smoke-release.py --mcp "$mcp" --models "${{ runner.temp }}/booth-models" --decoder-check
+          python3 -I scripts/cutoff-check.py --mcp "$mcp" --models "${{ runner.temp }}/booth-models" --seeds 1 --pace 0
 
       - name: macOS, app on the processor
         if: runner.os == 'macOS'

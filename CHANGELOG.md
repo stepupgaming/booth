@@ -10,6 +10,21 @@ or what stopped going wrong.
 Each version starts with a `## <version> (<date>)` heading. A release candidate such as
 `0.4.1-rc.2` uses the `## 0.4.1` section.
 
+## 0.6.0 (2026-11-27)
+
+- **Booth catches takes that leave words out.** Sometimes the voice model stops after the first
+  sentence, or skips part of a line, and ends in clean silence, so the take sounded finished but
+  wasn't. Booth now checks every take's length against its text and makes a take that is far too
+  short again with a new seed, the same way it already redoes takes that stop mid-word.
+- **"Guard against skips" is on for everyone.** It watches for skipped words and early endings
+  while each take is being made. In our tests it added at most about half a second per take, on a
+  graphics card or the processor. It's in Settings if you'd rather turn it off.
+- **"May be cut off" on takes Booth couldn't fix.** If every try of a take stopped early, Booth
+  keeps the best one and marks it in Studio and Long-form, so you know to listen to it or make it
+  again. Rewording the line or splitting it in two usually helps. Claude sees the same warning.
+- **Claude: a seed no longer means "never redo".** A take made with a seed that stops early is
+  made again with a new seed, and Booth tells Claude which seed it kept.
+
 ## 0.5.6 (2026-11-20)
 
 - **Save audio as WAV, MP3, M4A (AAC), FLAC or OGG (Opus).** One "Save audio as" menu picks the

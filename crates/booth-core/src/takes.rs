@@ -44,6 +44,10 @@ pub struct Take {
     /// Still unlike the voice after the retries; this was the closest try.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub drifted: bool,
+    /// No try came out whole: the take may stop before the text is done (it was too short for
+    /// its text, or ended chopped mid-word, every time Booth made it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cut_off: bool,
     #[serde(default)]
     pub starred: bool,
     #[serde(skip_deserializing, default)]
@@ -207,6 +211,71 @@ pub const CUT_DB: f64 = -50.0;
 /// Louder than this at the very end and the take was chopped mid-word.
 pub const HARD_CUT_DB: f64 = -30.0;
 
+/// Letters and digits per second of speech above which a take is too short for its text: the
+/// model stopped early and left words out, but ended in clean silence, so [`ending_db`] can't
+/// tell. Whole English takes ran 10 to 14 a second, the fastest pace included; one that dropped
+/// its second sentence ran at 43 (2026-11-27 test on ZONOS3 96d9e0e, 70 takes).
+pub const MAX_LETTERS_PER_SECOND: f64 = 25.0;
+/// Texts with fewer letters and digits than this aren't judged by length: a word or two can be
+/// drawn out or said fast, and the engine pads very short texts on its own.
+const MIN_LETTERS_JUDGED: usize = 20;
+/// Louder than this, a 10 ms window counts as speech for [`speech_seconds`].
+const SPEECH_DB: f64 = -45.0;
+
+/// How a finished take ended, as far as Booth can tell from its audio.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ending {
+    /// How loud the last 10 ms are ([`ending_db`]).
+    pub db: f64,
+    /// Too short for its text ([`too_short`]).
+    pub short: bool,
+}
+
+impl Ending {
+    /// The voice finished: a quiet ending and a length that fits the text.
+    pub fn clean(&self) -> bool {
+        self.db <= CUT_DB && !self.short
+    }
+
+    /// Of two tries, the one to keep: one with all its words first, then the quieter ending.
+    pub fn better_than(&self, other: &Ending) -> bool {
+        (self.short, self.db) < (other.short, other.db)
+    }
+}
+
+/// How `wav` ended for `text` (None when the WAV can't be read).
+pub fn ending(text: &str, wav: &[u8]) -> Option<Ending> {
+    Some(Ending { db: ending_db(wav)?, short: too_short(text, wav) })
+}
+
+/// Seconds from the first to the last 10 ms that sound like speech (0 when none do).
+pub fn speech_seconds(wav: &[u8]) -> f64 {
+    let Some((spec, samples)) = read_i16(wav) else { return 0.0 };
+    let win = (spec.sample_rate as usize / 100 * spec.channels.max(1) as usize).max(1);
+    let loud = |c: &[i16]| {
+        let ms = c.iter().map(|&s| (s as f64 / 32768.0).powi(2)).sum::<f64>() / c.len() as f64;
+        10.0 * ms.max(1e-12).log10() > SPEECH_DB
+    };
+    let windows: Vec<bool> = samples.chunks(win).map(loud).collect();
+    match (windows.iter().position(|&l| l), windows.iter().rposition(|&l| l)) {
+        (Some(a), Some(b)) => (b + 1 - a) as f64 / 100.0,
+        _ => 0.0,
+    }
+}
+
+/// True when the take is far too short to have said all of `text`. Counting letters and digits
+/// leaves out spaces and punctuation; numbers, initials and symbols take longer to say than they
+/// have letters, so they never make a take look short. Languages written with one sign per
+/// syllable (Chinese, Japanese) are never flagged at this rate, which is the safe side.
+pub fn too_short(text: &str, wav: &[u8]) -> bool {
+    let letters = text.chars().filter(|c| c.is_alphanumeric()).count();
+    if letters < MIN_LETTERS_JUDGED {
+        return false;
+    }
+    let secs = speech_seconds(wav);
+    secs > 0.0 && letters as f64 / secs > MAX_LETTERS_PER_SECOND
+}
+
 /// Fade the last `ms` of a WAV to silence, so a take that ends mid-sound doesn't click.
 pub fn fade_out(wav: &[u8], ms: u32) -> Result<Vec<u8>> {
     let (spec, mut samples) = read_i16(wav).context("reading the take's audio")?;
@@ -329,5 +398,51 @@ mod tests {
         let faded = fade_out(&wav(&loud), 30).unwrap();
         assert!(ending_db(&faded).unwrap() < ending_db(&wav(&loud)).unwrap() - 15.0);
         assert_eq!(wav_seconds(&faded), wav_seconds(&wav(&loud)));
+    }
+
+    /// `secs` of a tone, with 200 ms of silence on each side (8 kHz).
+    fn speech(secs: f64) -> Vec<u8> {
+        let mut s = vec![0i16; 1600];
+        s.extend((0..(secs * 8000.0) as usize).map(|i| ((i as f64 * 0.3).sin() * 8000.0) as i16));
+        s.extend(std::iter::repeat_n(0i16, 1600));
+        wav(&s)
+    }
+
+    const TWO_SENTENCES: &str = "Then a leaked intelligence file hits the press. U.S. spies were watching his secret \
+        affair with Alice Huang, an executive at a Singapore datacenter firm.";
+
+    #[test]
+    fn speech_seconds_leave_out_the_silence_around_the_voice() {
+        assert!((speech_seconds(&speech(2.0)) - 2.0).abs() < 0.02);
+        assert_eq!(speech_seconds(&wav(&[0; 8000])), 0.0);
+    }
+
+    #[test]
+    fn a_take_that_dropped_its_second_sentence_is_too_short() {
+        // The 2026-11-27 repro: the whole line takes about 11 s; the take that stopped after
+        // "hits the press." was 3.2 s with silence after it.
+        assert!(too_short(TWO_SENTENCES, &speech(2.9)));
+        assert!(!too_short(TWO_SENTENCES, &speech(11.0)));
+        // Faster than the fastest pace measured (about 14 a second) is still fine.
+        assert!(!too_short(TWO_SENTENCES, &speech(7.8)));
+        let e = ending(TWO_SENTENCES, &speech(2.9)).unwrap();
+        assert!(e.db < CUT_DB && e.short && !e.clean());
+    }
+
+    #[test]
+    fn short_texts_and_numbers_are_never_too_short() {
+        assert!(!too_short("Hi there.", &speech(0.2)));
+        // 21 digits said as words take far longer than 21 letters.
+        assert!(!too_short("Call 555 0199 or 800 555 0123 today", &speech(3.5)));
+    }
+
+    #[test]
+    fn the_kept_try_has_all_its_words_before_a_quiet_ending() {
+        let whole_but_loud = Ending { db: -35.0, short: false };
+        let short_but_quiet = Ending { db: -110.0, short: true };
+        let clean = Ending { db: -90.0, short: false };
+        assert!(whole_but_loud.better_than(&short_but_quiet));
+        assert!(clean.better_than(&whole_but_loud));
+        assert!(!short_but_quiet.better_than(&clean));
     }
 }

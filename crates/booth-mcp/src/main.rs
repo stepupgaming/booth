@@ -59,8 +59,9 @@ struct SpeakArgs {
     /// Controls by id from list_controls, id -> dose, e.g. {"happy": 3, "pace": -0.5, "accent:british": 1.2}.
     #[serde(default)]
     controls: BTreeMap<String, f64>,
-    /// Seed for a repeatable take. With a seed, Booth keeps the take as it is; without one, it
-    /// redoes an Exact take that comes out sounding like a different person.
+    /// Seed for a repeatable take. With a seed, Booth won't redo an Exact take that sounds like a
+    /// different person (without one, it does). A take that stops before the text is done is
+    /// still redone with a new seed; the seed returned is the one that made the kept take.
     #[serde(default)]
     seed: Option<u64>,
     /// Sampling temperature, 0.4 to 0.75. Default: the engine's 0.75. Lower makes takes of the
@@ -246,6 +247,7 @@ fn take_json(t: &Take) -> Value {
         "created_at": t.created_at,
         "redone": t.redone,
         "sounds_off": t.drifted,
+        "may_be_cut_off": t.cut_off,
     })
 }
 
@@ -283,6 +285,7 @@ fn script_json(j: &batch::Job, out: Option<&batch::Exported>) -> Value {
             "text": l.text,
             "seconds": (l.seconds * 10.0).round() / 10.0,
             "sounds_off": l.drifted,
+            "may_be_cut_off": l.cut_off,
         })).collect::<Vec<_>>(),
         "left_out": j.skipped,
     });
@@ -421,7 +424,7 @@ impl Booth {
     }
 
     #[tool(
-        description = "Speak one line out loud and save it as a WAV take. Returns the file path, length and seed.",
+        description = "Speak one line out loud and save it as a WAV take. Returns the file path, length and seed. may_be_cut_off true means every try stopped before the text was done (mid-word, or words left out): listen to it, or speak it again, reworded or split in two.",
         annotations(title = "Speak", read_only_hint = false, destructive_hint = false)
     )]
     async fn speak(&self, Parameters(a): Parameters<SpeakArgs>) -> Result<CallToolResult, ErrorData> {

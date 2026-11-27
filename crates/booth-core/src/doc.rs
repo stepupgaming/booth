@@ -1544,6 +1544,7 @@ It\rquote s \u8220?quoted\u8221?.\par}";
                     version: 1,
                     voice_match: Some(0.91),
                     drifted: false,
+                    cut_off: false,
                     error: None,
                     path: Some(format!(r"C:\Users\someone\AppData\Local\NoFaceTube\Booth\scripts\2026-11-17_101500_chapter-1\line-{i:04}-v1.wav").into()),
                 })
